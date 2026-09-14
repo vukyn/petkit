@@ -222,6 +222,9 @@ func TestAnUnknownCommandIsAUsageError(t *testing.T) {
 	if !strings.Contains(s.stderr.String(), "instal") {
 		t.Errorf("the error does not quote what was typed: %s", s.stderr.String())
 	}
+	if !strings.Contains(s.stderr.String(), "unknown command") {
+		t.Errorf("the error does not say what is wrong: %s", s.stderr.String())
+	}
 	if code := s.run(); code != 2 {
 		t.Errorf("no command at all exited %d, want 2", code)
 	}
@@ -330,5 +333,137 @@ func TestPluginsPlanPrintsAndChangesNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(s.home, ".claude", "plugins")); !os.IsNotExist(err) {
 		t.Error("plugins plan created something under the home directory")
+	}
+}
+
+// The help is the whole command surface, so it is asserted name by name. The
+// help text is rendered from the command graph rather than written out beside
+// it, which is what makes this test able to fail: a command dropped from the
+// graph leaves the help, and this list stops matching.
+func TestHelpListsEveryCommand(t *testing.T) {
+	commands := []string{
+		"status", "sync", "doctor", "settings", "plugins", "check", "version", "init",
+	}
+
+	// All three spellings reach the same help, and all three are worth 0.
+	for _, invocation := range [][]string{{"help"}, {"-h"}, {"--help"}} {
+		s := newSandbox(t)
+		if code := s.run(invocation...); code != 0 {
+			t.Fatalf("%v exited %d, want 0: %s", invocation, code, s.output())
+		}
+		// Only the indented command rows count. The prose underneath the list
+		// mentions `petkit init` too, and matching that would let a dropped
+		// command pass.
+		listed := map[string]bool{}
+		for _, line := range strings.Split(s.stdout.String(), "\n") {
+			name, ok := strings.CutPrefix(line, "  petkit ")
+			if !ok {
+				continue
+			}
+			if fields := strings.Fields(name); len(fields) > 0 {
+				listed[fields[0]] = true
+			}
+		}
+		for _, command := range commands {
+			if !listed[command] {
+				t.Errorf("%v does not list %q as a command:\n%s", invocation, command, s.stdout.String())
+			}
+		}
+	}
+}
+
+// --dry-run is the flag most likely to be broken by moving the parsing into a
+// framework, and the dry run itself is the promise that the preview costs
+// nothing. Both are asserted here, at the command line, where the wiring is.
+func TestSyncDryRunParsesAndWritesNothing(t *testing.T) {
+	s := newSandbox(t)
+	target := filepath.Join(s.home, ".claude", "skills", "writing-todo")
+
+	if code := s.run("sync", "--dry-run"); code != 0 {
+		t.Fatalf("sync --dry-run exited %d: %s", code, s.output())
+	}
+	if !strings.Contains(s.stdout.String(), "would create") {
+		t.Errorf("the flag did not reach the plan — no preview was printed: %s", s.stdout.String())
+	}
+	if strings.Contains(s.stdout.String(), "change(s)") {
+		t.Errorf("the dry run claimed to have changed something: %s", s.stdout.String())
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Errorf("the dry run created %s", target)
+	}
+	if _, err := os.Stat(filepath.Join(s.home, ".claude")); !os.IsNotExist(err) {
+		t.Error("the dry run created something under the home directory")
+	}
+
+	// The positive case the refusal owes: without the flag the identical
+	// command does make the link, so the test above is measuring the flag and
+	// not a sync that never works.
+	if code := s.run("sync"); code != 0 {
+		t.Fatalf("sync exited %d: %s", code, s.output())
+	}
+	link, err := os.Readlink(target)
+	if err != nil {
+		t.Fatalf("sync left no symlink at %s: %v", target, err)
+	}
+	if link != filepath.Join(s.root, "skills", "writing-todo") {
+		t.Errorf("the link points at %s, want the repository's copy", link)
+	}
+}
+
+// `petkit version` is the authority on what a version looks like, so the
+// framework's --version flag has to print what it prints — not the one-line
+// "petkit version X" the framework would print left to itself.
+func TestTheVersionFlagPrintsWhatTheVersionCommandPrints(t *testing.T) {
+	s := newSandbox(t)
+
+	if code := s.run("version"); code != 0 {
+		t.Fatalf("version exited %d: %s", code, s.output())
+	}
+	fromCommand := s.stdout.String()
+
+	if code := s.run("--version"); code != 0 {
+		t.Fatalf("--version exited %d: %s", code, s.output())
+	}
+	if fromFlag := s.stdout.String(); fromFlag != fromCommand {
+		t.Errorf("--version printed\n%q\nbut version printed\n%q", fromFlag, fromCommand)
+	}
+	if !strings.Contains(fromCommand, "1 items") {
+		t.Errorf("neither spelling counted the items: %s", fromCommand)
+	}
+}
+
+// A command line that cannot be parsed is a usage error (2) like an unknown
+// command, not a command that ran and failed (1). Every one of these was a
+// hand-written branch before the framework took the parsing over.
+func TestTheUsageErrorsAreAllWorthTwo(t *testing.T) {
+	for _, invocation := range [][]string{
+		{"sync", "--no-such-flag"},
+		{"settings"},
+		{"settings", "nope"},
+		{"plugins"},
+		{"plugins", "nope"},
+	} {
+		s := newSandbox(t)
+		if code := s.run(invocation...); code != 2 {
+			t.Errorf("%v exited %d, want 2: %s", invocation, code, s.output())
+		}
+		if s.stderr.Len() == 0 {
+			t.Errorf("%v failed without saying why", invocation)
+		}
+	}
+
+	// The positive case each refusal owes: the spellings these reject are
+	// rejected because they are wrong, not because the command is broken.
+	for _, invocation := range [][]string{
+		{"sync", "--dry-run"},
+		{"settings", "diff"},
+		{"plugins", "plan"},
+	} {
+		s := newSandbox(t)
+		write(t, filepath.Join(s.root, "settings", "fragment.json"), `{"model": "opus[1m]"}`)
+		write(t, filepath.Join(s.root, "settings", "plugins.json"), `{"marketplaces": {}, "plugins": []}`)
+		if code := s.run(invocation...); code != 0 {
+			t.Errorf("%v exited %d, want 0: %s", invocation, code, s.output())
+		}
 	}
 }

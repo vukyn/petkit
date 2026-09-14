@@ -58,6 +58,8 @@ defect fixed in `internal/link` is still `SETT`.
 | `PLUG-004` | open | `settings/plugins.json` was reduced by hand and nothing reproduces it — the obvious rebuild copies `installed_plugins.json`, whose `projectPath` is an absolute path into whatever repository a plugin was installed for |
 | `PLUG-002` | open | Two machines can end up on different plugin versions and the manifest cannot say otherwise |
 | `CLI-001` | done | The command surface and the version rule |
+| `CLI-003` | done | The command surface moved to `urfave/cli/v3` — every documented message byte-identical, and an undefined flag is now refused instead of silently ignored |
+| `CLI-004` | done | `petkit version` printed a whole pseudo-version on a dirty tree: `+dirty` is build metadata and the anchored pattern did not allow for it |
 | `CLI-002` | open | `go install` works from the public proxy, but a binary with no clone can only answer `version` — measured; what is left is whether `check` should reach the tags API |
 | `DOC-001` | open | Fourteen stale skill copies still sit in `~/.claude/skills`, and it is unmeasured whether they shadow the plugin's own |
 | `LINK-003` | refused | Installing by copy instead of by symlink |

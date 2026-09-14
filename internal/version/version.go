@@ -20,7 +20,13 @@ const Devel = "(devel)"
 // timestamp differs between them: v0.0.0-20260914150405-abcdef123456 when no
 // tag precedes the commit, and v1.2.3-0.20260914150405-abcdef123456 when one
 // does.
-var pseudoVersion = regexp.MustCompile(`^v.*[-.][0-9]{14}-[0-9a-f]{12}$`)
+//
+// ⚠️ A build from a dirty working tree carries a `+dirty` build metadata suffix,
+// and an anchored pattern without it matches nothing — so the whole
+// pseudo-version used to be printed where a revision was meant. The suffix is
+// optional here and kept in the output, because "which commit" and "plus
+// uncommitted changes" are two different answers and a reader needs both.
+var pseudoVersion = regexp.MustCompile(`^v.*[-.][0-9]{14}-[0-9a-f]{12}(\+[0-9A-Za-z.-]+)?$`)
 
 // Current reads the version out of the build info.
 func Current() string {
