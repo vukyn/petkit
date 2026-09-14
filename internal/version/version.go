@@ -37,6 +37,21 @@ func Current() string {
 	return Format(info.Main.Version)
 }
 
+// ModulePath reads the module this binary was built from, out of the same build
+// info the version comes from. It is empty when the build carries no module
+// path at all.
+//
+// ⚠️ This is what `petkit setup` clones, and it is deliberately not a constant.
+// A fork installed from its own module path clones itself; a constant would send
+// it to somebody else's repository, and the mistake would look like success.
+func ModulePath() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(info.Main.Path)
+}
+
 // Format leaves a tag whole and trims a pseudo-version to its revision, which
 // is the only part of a pseudo-version anybody can act on.
 func Format(raw string) string {

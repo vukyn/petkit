@@ -97,3 +97,76 @@ the way it is. The entries carry the same `AREA-NNN` codes.
       is why it survived the release. The version rule has three shapes — a tag, a
       pseudo-version, and a pseudo-version from a dirty tree — and the third only
       exists while somebody is working.
+
+- [x] `CLI-005` **`petkit setup` — installing is one command now.** Done
+      2026-09-14, out of `CLI-002`'s measurement that a binary with no clone can
+      only answer `version`.
+
+      **What shipped.** `petkit setup [path] [--sync]`, default path `~/.petkit`.
+      It derives the repository from the module this binary was built from,
+      refuses a target that is not missing-or-empty, clones, records the path
+      through **`petkit init`'s own recorder** (`state.Init`, not a second
+      writer), and then prints what `status` would print for the fresh manifest
+      plus the exact next command. `--sync` runs the same code `petkit sync`
+      runs and carries its exit code. Three steps in two tools became
+      `go install` + `petkit setup`.
+
+      **The URL is not a constant, and that is the point.** It is
+      `"https://" + debug.BuildInfo.Main.Path` — the same build info the version
+      comes from. A fork installed from its own module path clones **itself**; a
+      constant would send it to this repository, and the failure would look like
+      success: a working clone of the wrong person's setup. ⚠️ The test that
+      holds the line asserts **the argument the fake runner received**, not
+      anything printed, because a constant smuggled back in prints an equally
+      plausible line. Mutation-checked: replacing the derivation with
+      `"https://github.com/vukyn/petkit"` turns
+      `TestTheCloneURLIsBuiltFromTheModulePath` red.
+
+      **What setup deliberately does not do.**
+
+      - ⚠️ **It creates no symlink without `--sync`.** Writing into `~/.claude`
+        is `sync`'s decision, with `sync`'s conflict rule and `sync`'s exit code,
+        and a command whose job is "get me started" is the worst place to make it
+        by surprise. The test snapshots the home directory either side of the
+        command and allows exactly one addition — the record — and no symlink at
+        all. Mutation-checked: making setup always sync turns
+        `TestSetupWithoutSyncMakesNoLinks` red.
+      - **It removes nothing.** The target must be missing or an empty
+        directory; a directory with anything in it, or a file, is named and left.
+        This is `sync`'s "only a symlink may be removed" rule applied to the one
+        directory setup writes, and the test **reads the file back out** rather
+        than stat'ing it. Mutation-checked, as is the refusal of a machine that
+        already has a recorded, resolving repository — a second clone of the
+        thing whose whole point is that there is one.
+      - **It does not clone shallow.** No `--depth`: `petkit check` compares
+        tags, and a shallow clone arrives without them. Asserted in the same test
+        that asserts the URL, and confirmed on the real clone
+        (`rev-parse --is-shallow-repository` → `false`, `tag` → `v0.2.0`).
+
+      **Measured end to end**, binary built with `go build`, against a disposable
+      `HOME` and a scratch directory: the clone happened, the record landed in
+      `~/.config/petkit/config.json`, `status` reported both items `missing`,
+      and `petkit check` — run from a directory with no `petkit.yaml` above it —
+      answered `checkout on v0.2.0`. `--sync` into a second disposable `HOME`
+      created both links; over a pre-existing real directory it created the other
+      one, refused that one by name, exited 1, and the file in the way still read
+      `somebody else's`.
+
+      ⚠️ **Two things about the derivation that do not hold, written down because
+      they will not be obvious later.**
+
+      1. **"Build info is unavailable" is almost never the failing shape.**
+         `go run` carries a module path (measured: `ok=true`,
+         `path="example.com/…"`, `version="(devel)"`), and so does a plain
+         `go build`. The case that actually produces an empty path is a build
+         outside module mode — `GO111MODULE=off` in GOPATH — where
+         `debug.ReadBuildInfo()` still returns `ok=true` and `Main.Path` is `""`.
+         The guard is therefore on the **empty path**, not on the `ok` flag, and
+         the message says "this build carries no module path" rather than naming
+         `go run`.
+      2. **A `/vN` module suffix would break it.** `github.com/vukyn/petkit/v2`
+         is a valid module path and `https://github.com/vukyn/petkit/v2` is not a
+         repository. petkit has no `/v2` and may never have one, so nothing
+         trims it — but if this repository ever takes a major version, `CloneURL`
+         is the line that has to learn about it, and the symptom will be a clone
+         that 404s rather than anything subtle.

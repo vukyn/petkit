@@ -60,7 +60,8 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-001` | done | The command surface and the version rule |
 | `CLI-003` | done | The command surface moved to `urfave/cli/v3` — every documented message byte-identical, and an undefined flag is now refused instead of silently ignored |
 | `CLI-004` | done | `petkit version` printed a whole pseudo-version on a dirty tree: `+dirty` is build metadata and the anchored pattern did not allow for it |
-| `CLI-002` | open | `go install` works from the public proxy, but a binary with no clone can only answer `version` — measured; what is left is whether `check` should reach the tags API |
+| `CLI-005` | done | `petkit setup` clones the repository this binary was built from, records it, and reports what `sync` would do — install, one command, done |
+| `CLI-002` | open | A binary can now clone itself a repository, but `check` still fails without one — what is left is whether it should answer from the tags API instead |
 | `DOC-001` | open | Fourteen stale skill copies still sit in `~/.claude/skills`, and it is unmeasured whether they shadow the plugin's own |
 | `LINK-003` | refused | Installing by copy instead of by symlink |
 | `PLUG-003` | refused | Installing plugins ourselves instead of printing `claude plugin` commands |
@@ -89,6 +90,13 @@ defect fixed in `internal/link` is still `SETT`.
   framework. The version is the **git tag**, read from `debug.BuildInfo` — no
   constant, no `-ldflags`. The repository is found by walking up for
   `petkit.yaml`, then `$PETKIT_HOME`, then what `init` recorded.
+- `CLI-005` **`petkit setup`.** Installing was three steps in two tools; it is
+  now `go install` and `petkit setup`. Setup clones the repository **this binary
+  was built from** — `debug.BuildInfo.Main.Path`, so a fork clones itself and
+  there is no URL constant to get wrong — into `~/.petkit` or a path you name,
+  records it through `petkit init`'s own recorder, and prints what `status`
+  would print plus the next command. ⚠️ It **creates no symlink** without
+  `--sync`, and it overwrites nothing: the target must be missing or empty.
 
 ## Not done
 
@@ -168,16 +176,22 @@ defect fixed in `internal/link` is still `SETT`.
       ⚠️ The test is the point. A capture command whose reduction is only asserted
       by reading the code is the same hand-reduction with more steps.
 
-- [ ] `CLI-002` **`check` needs a clone, and so does everything except
-      `version`.** Raised 2026-09-14 with the first version, **measured the same
-      day**.
+- [ ] `CLI-002` **`check` still needs a clone.** Raised 2026-09-14 with the first
+      version, **measured the same day**; the premise moved under it when
+      `CLI-005` shipped.
 
       `go install github.com/vukyn/petkit/cmd/petkit@latest` works — measured
       against a clean module cache with no `GOPRIVATE` and no credentials, both
-      `@latest` and `@v0.1.0` install and the binary reports `petkit v0.1.0`. But
-      the binary alone installs
-      nothing: every symlink points into a clone, so a machine with the binary and
-      no clone gets this from `check`, `sync`, `status` and `doctor` alike:
+      `@latest` and `@v0.1.0` install and the binary reports `petkit v0.1.0`.
+
+      **What `CLI-005` took off this entry.** "The binary cannot get itself a
+      clone" is no longer true: `petkit setup` clones and records in one command,
+      and `check` answers normally from that moment on — measured end to end, a
+      fresh binary against a disposable `HOME` reports `checkout on v0.2.0` a
+      second after setup returns. The install story is closed; this entry is not.
+
+      **What is left.** `check`, `sync`, `status` and `doctor` on a machine with
+      no repository *and* no setup still get:
 
       ```
       petkit: cannot find the petkit repository: no petkit.yaml above /tmp,
@@ -186,15 +200,17 @@ defect fixed in `internal/link` is still `SETT`.
       run petkit from inside the repository
       ```
 
-      ⚠️ **That message is already the cheap half of the fix** — it names the
-      cause and the way out in one sentence. What is still open is narrower: should
-      `check` answer "is there a newer tag" **without** a clone, from the GitHub
-      tags API? It is the one question a machine can sensibly ask before it has
-      cloned anything.
+      ⚠️ Two things that message does not yet say, and they are the open work:
+      it names `petkit init` but not `petkit setup`, which is now the answer for
+      a machine that has no clone **at all** — and the original question is
+      untouched: should `check` answer "is there a newer tag" **without** a
+      clone, from the GitHub tags API? It is the one question a machine can
+      sensibly ask before it has cloned anything, and setup did not answer it
+      because setup's answer is "clone first".
 
       **What closing it needs.** Either `check` falls back to the GitHub tags API
-      when there is no repository, or its error says exactly that in one sentence
-      — which is cheap and might be the whole answer.
+      when there is no repository, or its error names both ways out in one
+      sentence — which is cheap and might be the whole answer.
 
 - [ ] `DOC-001` ⚠️ **Fourteen stale skill copies sit in the skills directory, and
       it is unmeasured whether they shadow the plugin's own.** Raised 2026-09-14

@@ -3,17 +3,30 @@
 One machine's Claude Code setup, kept in a repository and installed by **symlink**.
 
 ```sh
+go install github.com/vukyn/petkit/cmd/petkit@latest   # or @v0.1.0
+petkit setup                                           # clone into ~/.petkit and record it
+petkit sync                                            # install the links
+```
+
+`petkit setup [path]` clones the repository **this binary was built from** —
+the module path is read out of the build info, so a fork installed from its own
+path clones itself — records where it went, and prints what `sync` would do.
+`petkit setup --sync` goes all the way in one command.
+
+⚠️ **Setup makes no symlinks of its own.** Installing into `~/.claude` is
+`sync`'s decision, with `sync`'s refusals; a command whose job is "get me
+started" is the worst place to make it by surprise. Setup removes nothing
+either: the path it is given must be missing or an empty directory, and anything
+else is named and left alone.
+
+**Already keep your clone somewhere else?** Then the three-step form is still
+yours, and `setup` is not involved:
+
+```sh
 git clone <this repository> ~/src/petkit   # anywhere; the path is yours to pick
 cd ~/src/petkit
 go install ./cmd/petkit                    # the clone is the source; see below
 petkit init . && petkit sync
-```
-
-`go install` works too, and is the right way to get the binary onto a machine
-that keeps its clone somewhere else:
-
-```sh
-go install github.com/vukyn/petkit/cmd/petkit@latest       # or @v0.1.0
 ```
 
 Measured 2026-09-14 against a clean module cache with no `GOPRIVATE` and no
@@ -21,15 +34,19 @@ credentials: the proxy serves it (`proxy.golang.org/.../@latest` answers
 `v0.1.0`), and the installed binary reports `petkit v0.1.0` — the version comes
 from the tag on the proxy path exactly as it does on a local build.
 
-⚠️ **The binary alone is not an install.** Every symlink points into the clone, so
-the clone has to exist and `petkit init` has to know where it is. A binary with no
-repository answers `version` and nothing else:
+⚠️ **The binary alone is still not an install** — it is one command away from
+being one. Every symlink points into the clone, so the clone has to exist and
+petkit has to know where it is. A binary that has neither answers `version` and
+nothing else:
 
 ```
 petkit: cannot find the petkit repository: no petkit.yaml above /tmp,
 PETKIT_HOME is not set, and nothing is recorded in ~/.config/petkit/config.json —
 run `petkit init /path/to/petkit` once, or run petkit from inside the repository
 ```
+
+`petkit setup` is the answer to that message on a machine that has no clone at
+all; `petkit init <path>` is the answer on a machine that does.
 
 `petkit sync` makes `~/.claude` match `petkit.yaml`. Nothing is copied: each
 target becomes a symlink into this repository, so **editing a skill here is
@@ -39,6 +56,7 @@ because there is no second copy.
 
 | command | what it does |
 |---|---|
+| `petkit setup [path] [--sync]` | clone the repository this binary came from, record it, and say what `sync` would do |
 | `petkit status` | one line per item: `linked`, `missing`, `stale`, `conflict` |
 | `petkit sync [--dry-run]` | create the missing links, repoint the stale ones |
 | `petkit doctor` | broken links, unmanaged entries, sources that do not exist |
@@ -48,6 +66,10 @@ because there is no second copy.
 | `petkit version` | the build version and the item count |
 
 ## What it will not do
+
+⚠️ **`setup` never overwrites and never links.** The directory it clones into
+must be missing or empty — a directory with anything in it is named and left
+exactly as it was — and without `--sync` it leaves `~/.claude` untouched.
 
 ⚠️ **`sync` only ever removes a symlink.** A real file or directory where a
 target should go is a `conflict`: it is named, it is left alone, and the command
