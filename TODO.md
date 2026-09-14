@@ -68,6 +68,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-007` | done | A missing git said `executable file not found in %PATH%`; it now names git and says what needs it |
 | `CLI-002` | open | A binary can now clone itself a repository, but `check` still fails without one — what is left is whether it should answer from the tags API instead |
 | `CLI-010` | done | The resolution was invisible: `status`, `sync`, `doctor` and `check` now open with which repository they resolved and how, and say both when the walked-up one is not the one `init` recorded |
+| `CLI-011` | open | Every CLI test asserts with `strings.Contains` over the whole buffer, so a brand-new first line was invisible to all of them and a line going missing would be too |
 | `CLI-009` | open | Nothing has ever run on Windows — the port is compile-checked and unit-checked from macOS, and the machine itself is unmeasured |
 | `DOC-001` | done | The fourteen stale copies were not shadowing anything — the plugin was installed project-scoped to another project and did not load here at all. Installed at user scope, the thirteen copies backed up and removed |
 | `LINK-003` | refused | Installing by copy instead of by symlink |
@@ -221,6 +222,42 @@ defect fixed in `internal/link` is still `SETT`.
       **What closing it needs.** Either `check` falls back to the GitHub tags API
       when there is no repository, or its error names both ways out in one
       sentence — which is cheap and might be the whole answer.
+
+- [ ] `CLI-011` ⚠️ **Every CLI test asserts by searching the whole buffer, so
+      the suite cannot see a line arrive or leave.** Raised 2026-09-14 out of
+      `CLI-010`, which was expected to break these tests and did not.
+
+      **What is wrong.** The assertions in `cmd/petkit/main_test.go` are
+      `strings.Contains(stdout, "…")` over the entire output. That answers "does
+      this phrase appear somewhere", which is a much weaker question than the one
+      the tests are named for.
+
+      **The measurement that raised it.** `CLI-010` added a **new first line** to
+      `status`, `sync`, `doctor` and `check` — every command that resolves a
+      repository. The brief predicted the byte-for-byte assertions would fail and
+      that they would have to be updated. **Not one test moved**, and `make check`
+      stayed green. A change to the first thing a user sees, on four commands, was
+      invisible to 141 tests.
+
+      ⚠️ **The symmetric case is the one that will bite.** A `Contains` assertion
+      cannot notice a line *disappearing* either, as long as the phrase it hunts
+      for survives elsewhere in the buffer. So the suite protects the words and
+      not the shape: order, position, and whether a line exists at all are all
+      unmeasured. The two tests `CLI-010` added read the first line by index
+      (`strings.SplitN(stdout, "\n", 2)[0]`) precisely to sidestep this, and they
+      are currently the only ones in the file that can.
+
+      **What closing it needs.** Not a rewrite of every assertion — the phrase
+      checks are fine for "this error names the item". What is missing is a
+      **shape** assertion per command: the sequence of lines a command prints, in
+      order, with the variable parts matched loosely. One helper, one table, and
+      every command's skeleton becomes a thing the suite owns.
+
+      ⚠️ **Do not close this by switching every `Contains` to an equality check.**
+      Output that is fully pinned is output nobody can improve without a red
+      suite, and this file already argues the opposite for messages that are the
+      interface (`CLI-003`). The line to hold is: **the shape is asserted, the
+      wording is sampled.**
 
 - [ ] `CLI-009` ⚠️ **Nothing has ever run on Windows.** Raised 2026-09-14 with
       the port that made the code correct there.
