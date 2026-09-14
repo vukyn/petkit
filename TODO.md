@@ -58,7 +58,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `PLUG-004` | open | `settings/plugins.json` was reduced by hand and nothing reproduces it — the obvious rebuild copies `installed_plugins.json`, whose `projectPath` is an absolute path into whatever repository a plugin was installed for |
 | `PLUG-002` | open | Two machines can end up on different plugin versions and the manifest cannot say otherwise |
 | `CLI-001` | done | The command surface and the version rule |
-| `CLI-002` | open | `go install` works (with `GOPRIVATE`), but a binary with no clone can only answer `version` — measured; what is left is whether `check` should reach the tags API |
+| `CLI-002` | open | `go install` works from the public proxy, but a binary with no clone can only answer `version` — measured; what is left is whether `check` should reach the tags API |
 | `DOC-001` | open | Fourteen stale skill copies still sit in `~/.claude/skills`, and it is unmeasured whether they shadow the plugin's own |
 | `LINK-003` | refused | Installing by copy instead of by symlink |
 | `PLUG-003` | refused | Installing plugins ourselves instead of printing `claude plugin` commands |
@@ -170,9 +170,10 @@ defect fixed in `internal/link` is still `SETT`.
       `version`.** Raised 2026-09-14 with the first version, **measured the same
       day**.
 
-      `go install github.com/vukyn/petkit/cmd/petkit@latest` works — with
-      `GOPRIVATE='github.com/vukyn/*'` set, both `@latest` and `@v0.1.0` install
-      and the binary reports `petkit v0.1.0`. But the binary alone installs
+      `go install github.com/vukyn/petkit/cmd/petkit@latest` works — measured
+      against a clean module cache with no `GOPRIVATE` and no credentials, both
+      `@latest` and `@v0.1.0` install and the binary reports `petkit v0.1.0`. But
+      the binary alone installs
       nothing: every symlink points into a clone, so a machine with the binary and
       no clone gets this from `check`, `sync`, `status` and `doctor` alike:
 
