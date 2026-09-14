@@ -45,6 +45,48 @@ func Diff(live, fragment []byte) ([]Change, error) {
 	return changes, nil
 }
 
+// Drift is how far the file on a machine has moved from the fragment.
+//
+// ⚠️ It is Diff's answer with the file read for it, and nothing more. `status`
+// needs the same question `settings diff` asks, and a second comparison written
+// for the one-line answer would be free to disagree with the command the line
+// tells the reader to run.
+type Drift struct {
+	// Absent: there is no settings file at all. A machine that has never run
+	// `settings apply` is not drifted, it is empty, and the two want different
+	// sentences.
+	Absent bool
+
+	// Changes is what applying the fragment would change — empty when the file
+	// already says what the fragment says.
+	Changes []Change
+}
+
+// InStep reports whether the file exists and already says what the fragment
+// says.
+func (d Drift) InStep() bool { return !d.Absent && len(d.Changes) == 0 }
+
+// Inspect reads the live settings file and compares it with the fragment. A
+// missing file is not an error: it is the Absent case, and it is compared
+// against an empty object so the changes still describe what apply would write.
+func Inspect(livePath string, fragment []byte) (Drift, error) {
+	var drift Drift
+
+	live, err := os.ReadFile(livePath)
+	if os.IsNotExist(err) {
+		drift.Absent = true
+		live = []byte("{}")
+	} else if err != nil {
+		return drift, fmt.Errorf("cannot read %s: %w", livePath, err)
+	}
+
+	drift.Changes, err = Diff(live, fragment)
+	if err != nil {
+		return drift, err
+	}
+	return drift, nil
+}
+
 func diffObject(live, fragment *object, prefix string, changes *[]Change) {
 	for _, key := range fragment.keys {
 		path := key
@@ -179,23 +221,44 @@ func Apply(path string, fragment []byte, now time.Time) (ApplyResult, error) {
 	}
 	result.Changed = true
 
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return result, fmt.Errorf("cannot create %s: %w", directory, err)
-	}
-
-	if existed {
-		backup := fmt.Sprintf("%s.petkit-backup-%s", path, now.Format("20060102T150405"))
-		if err := os.WriteFile(backup, live, mode); err != nil {
-			return result, fmt.Errorf("cannot write the backup %s: %w — nothing was changed", backup, err)
-		}
-		result.BackupPath = backup
-	}
-
-	if err := writeAtomic(path, merged, mode); err != nil {
+	result.BackupPath, err = WriteWithBackup(path, merged, mode, now)
+	if err != nil {
 		return result, err
 	}
 	return result, nil
+}
+
+// WriteWithBackup is petkit's whole rule for replacing a file somebody else may
+// be holding: a timestamped backup beside it, then a temp file in the same
+// directory, then a rename. It answers with the backup's path, or "" when there
+// was nothing there to back up.
+//
+// ⚠️ It is exported so that every command which replaces a whole file goes
+// through this one — `settings apply` and `plugins capture`. A second copy of
+// these lines is a second answer to "was it backed up", and the copy that gets
+// it wrong is the one nobody watched being written.
+func WriteWithBackup(path string, content []byte, mode os.FileMode, now time.Time) (string, error) {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return "", fmt.Errorf("cannot create %s: %w", directory, err)
+	}
+
+	backupPath := ""
+	existing, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		backupPath = fmt.Sprintf("%s.petkit-backup-%s", path, now.Format("20060102T150405"))
+		if err := os.WriteFile(backupPath, existing, mode); err != nil {
+			return "", fmt.Errorf("cannot write the backup %s: %w — nothing was changed", backupPath, err)
+		}
+	case !os.IsNotExist(err):
+		return "", fmt.Errorf("cannot read %s: %w", path, err)
+	}
+
+	if err := writeAtomic(path, content, mode); err != nil {
+		return backupPath, err
+	}
+	return backupPath, nil
 }
 
 func readLive(path string) (content []byte, existed bool, mode os.FileMode, err error) {

@@ -516,6 +516,281 @@ func TestTheUsageErrorsAreAllWorthTwo(t *testing.T) {
 	}
 }
 
+// ⚠️ CLI-010. Running petkit from inside a second clone silently repoints every
+// link into that clone, because the repository is resolved by walking up from
+// the working directory FIRST. Nothing was wrong from petkit's side and nothing
+// said anything, so every command that acts on the repository now says which
+// one it resolved and how.
+func TestEveryCommandSaysWhichRepositoryItResolvedAndHow(t *testing.T) {
+	for _, invocation := range [][]string{{"status"}, {"sync", "--dry-run"}, {"doctor"}, {"check"}} {
+		s := newSandbox(t)
+		if code := s.run(invocation...); code != 0 {
+			t.Fatalf("%v exited %d: %s", invocation, code, s.output())
+		}
+		first := strings.SplitN(s.stdout.String(), "\n", 2)[0]
+		if !strings.Contains(first, s.root) {
+			t.Errorf("%v does not name the repository it used: %q", invocation, first)
+		}
+		if !strings.Contains(first, string(state.SourceWalkUp)) {
+			t.Errorf("%v does not say how it found it: %q", invocation, first)
+		}
+	}
+
+	// The other two ways in, so the line reports the resolution rather than a
+	// constant that happens to be right in the common case.
+	elsewhere := t.TempDir()
+	byEnvironment := newSandbox(t)
+	byEnvironment.env[state.EnvHome] = byEnvironment.root
+	code := run([]string{"status"}, environment{
+		layout:     byEnvironment.layout(),
+		workingDir: elsewhere,
+		env:        byEnvironment.environ,
+		stdout:     byEnvironment.stdout,
+		stderr:     byEnvironment.stderr,
+	})
+	if code != 0 {
+		t.Fatalf("status exited %d with %s set: %s", code, state.EnvHome, byEnvironment.output())
+	}
+	if !strings.Contains(byEnvironment.stdout.String(), string(state.SourceEnv)) {
+		t.Errorf("status did not say %s answered: %s", state.EnvHome, byEnvironment.stdout.String())
+	}
+
+	byRecord := newSandbox(t)
+	if code := byRecord.run("init", byRecord.root); code != 0 {
+		t.Fatalf("init exited %d: %s", code, byRecord.output())
+	}
+	byRecord.stdout.Reset()
+	code = run([]string{"status"}, environment{
+		layout:     byRecord.layout(),
+		workingDir: elsewhere,
+		env:        byRecord.environ,
+		stdout:     byRecord.stdout,
+		stderr:     byRecord.stderr,
+	})
+	if code != 0 {
+		t.Fatalf("status exited %d after init: %s", code, byRecord.output())
+	}
+	if !strings.Contains(byRecord.stdout.String(), string(state.SourceRecord)) {
+		t.Errorf("status did not say the record answered: %s", byRecord.stdout.String())
+	}
+	// ⚠️ And it does not claim a disagreement where there is none: the record
+	// and the walked-up repository are the same clone here.
+	if strings.Contains(byRecord.stdout.String(), "but petkit init recorded") {
+		t.Errorf("status reported a disagreement with itself: %s", byRecord.stdout.String())
+	}
+}
+
+// ⚠️ The surprising case, and the actual defect CLI-010 is about: the machine
+// was set up at one path and the shell is sitting inside a different clone. The
+// walked-up clone wins — deliberately, because that is what makes a fresh
+// checkout usable before `init` — so the line has to say both, or a `sync` here
+// repoints every link into the clone nobody chose.
+func TestAWalkedUpRepositoryThatIsNotTheRecordedOneNamesBoth(t *testing.T) {
+	s := newSandbox(t)
+	other := filepath.Join(s.base, "other-clone")
+	writeRepository(t, other)
+
+	if code := s.run("init", other); code != 0 {
+		t.Fatalf("init exited %d: %s", code, s.output())
+	}
+
+	// The working directory is s.root; the record says other.
+	if code := s.run("sync", "--dry-run"); code != 0 {
+		t.Fatalf("sync --dry-run exited %d: %s", code, s.output())
+	}
+	first := strings.SplitN(s.stdout.String(), "\n", 2)[0]
+	if !strings.Contains(first, s.root) {
+		t.Errorf("the line does not name the repository that was used: %q", first)
+	}
+	if !strings.Contains(first, other) {
+		t.Errorf("the line does not name the repository init recorded: %q", first)
+	}
+	if !strings.Contains(first, "petkit init recorded") {
+		t.Errorf("the line does not say which is which: %q", first)
+	}
+
+	// The positive case the report owes: from a working directory with no
+	// petkit.yaml above it the record answers, the two agree, and the line says
+	// so without the second half.
+	s.stdout.Reset()
+	code := run([]string{"sync", "--dry-run"}, environment{
+		layout:     s.layout(),
+		workingDir: t.TempDir(),
+		env:        s.environ,
+		stdout:     s.stdout,
+		stderr:     s.stderr,
+	})
+	if code != 0 {
+		t.Fatalf("sync --dry-run exited %d from a neutral directory: %s", code, s.output())
+	}
+	agreed := strings.SplitN(s.stdout.String(), "\n", 2)[0]
+	if strings.Contains(agreed, "petkit init recorded") {
+		t.Errorf("the line claimed a disagreement where there is none: %q", agreed)
+	}
+	if !strings.Contains(agreed, other) {
+		t.Errorf("the line does not name the recorded repository: %q", agreed)
+	}
+}
+
+// ⚠️ SETT-002. `settings diff` answers the drift question when asked and
+// nothing asks it, so a machine whose settings.json was edited by hand months
+// after the fragment was applied reports `linked` on every skill and is still
+// not the machine the repository describes. status says so in one line — and
+// keeps its exit code of 0, because drift is a report and not a failure.
+func TestStatusSaysWhetherTheSettingsFileIsInStep(t *testing.T) {
+	s := newSandbox(t)
+	write(t, filepath.Join(s.root, "settings", "fragment.json"), `{"model": "opus[1m]"}`)
+	live := filepath.Join(s.home, ".claude", "settings.json")
+
+	// Absent: there is no settings file at all yet.
+	if code := s.run("status"); code != 0 {
+		t.Fatalf("status exited %d with no settings file: %s", code, s.output())
+	}
+	if !strings.Contains(s.stdout.String(), "is absent") {
+		t.Errorf("status did not report the absent settings file: %s", s.stdout.String())
+	}
+
+	// Drifted: the live file says something else, in two places.
+	write(t, live, `{"model": "sonnet", "permissions": {"defaultMode": "ask"}, "keep": 1}`)
+	write(t, filepath.Join(s.root, "settings", "fragment.json"),
+		`{"model": "opus[1m]", "permissions": {"defaultMode": "acceptEdits"}}`)
+	if code := s.run("status"); code != 0 {
+		t.Fatalf("status exited %d over drift: %s", code, s.output())
+	}
+	if !strings.Contains(s.stdout.String(), "has drifted from the fragment in 2 key(s)") {
+		t.Errorf("status did not count the drifted keys: %s", s.stdout.String())
+	}
+
+	// In step: the same machine a moment after `settings apply`.
+	if code := s.run("settings", "apply"); code != 0 {
+		t.Fatalf("settings apply exited %d: %s", code, s.output())
+	}
+	if code := s.run("status"); code != 0 {
+		t.Fatalf("status exited %d after apply: %s", code, s.output())
+	}
+	if !strings.Contains(s.stdout.String(), "is in step with the fragment") {
+		t.Errorf("status did not report an applied machine as in step: %s", s.stdout.String())
+	}
+	if strings.Contains(s.stdout.String(), "drifted") {
+		t.Errorf("status reported drift on a machine that has none: %s", s.stdout.String())
+	}
+}
+
+// writeLivePlugins is a machine that has installed plugins: the two files
+// ~/.claude/plugins holds, with the fields a capture must not carry across.
+func (s *sandbox) writeLivePlugins(t *testing.T, version string) {
+	t.Helper()
+	dir := filepath.Join(s.home, ".claude", "plugins")
+	write(t, filepath.Join(dir, "known_marketplaces.json"), `{
+      "context-mode": {
+        "source": {"source": "github", "repo": "mksglu/context-mode"},
+        "installLocation": "/Users/someone/.claude/plugins/marketplaces/context-mode"
+      }
+    }`)
+	write(t, filepath.Join(dir, "installed_plugins.json"), `{
+      "version": 1,
+      "plugins": {
+        "context-mode@context-mode": [{
+          "scope": "project",
+          "projectPath": "/Users/someone/work/a-clients-private-repo",
+          "installPath": "/Users/someone/.claude/plugins/cache/context-mode",
+          "version": "`+version+`"
+        }]
+      },
+      "enabledPlugins": {"context-mode@context-mode": true}
+    }`)
+}
+
+// ⚠️ PLUG-004 at the command line. capture writes into the REPOSITORY, which is
+// the only file petkit rewrites outside the home directory, so it owes the same
+// backup → temp → rename the settings merge gives a user's file — and a run
+// that changes nothing must write nothing, or every run leaves another backup.
+func TestPluginsCaptureWritesTheReducedFileAndRepeatsItself(t *testing.T) {
+	s := newSandbox(t)
+	s.writeLivePlugins(t, "1.0.169")
+	path := filepath.Join(s.root, "settings", "plugins.json")
+	write(t, path, `{
+      "enabled": {},
+      "marketplaces": {},
+      "plugins": [{"id": "context-mode@context-mode", "scope": "user", "version": "1.0.100"}]
+    }`)
+
+	if code := s.run("plugins", "capture"); code != 0 {
+		t.Fatalf("plugins capture exited %d: %s", code, s.output())
+	}
+	captured, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the capture: %v", err)
+	}
+	if strings.Contains(string(captured), "a-clients-private-repo") ||
+		strings.Contains(string(captured), "installPath") {
+		t.Errorf("the written file carries a path out of the live file:\n%s", captured)
+	}
+	if !strings.Contains(string(captured), `"version": "1.0.169"`) {
+		t.Errorf("the capture did not record what this machine has:\n%s", captured)
+	}
+	if !strings.Contains(s.stdout.String(), "last seen 1.0.100 -> 1.0.169") {
+		t.Errorf("capture did not print what changed: %s", s.stdout.String())
+	}
+
+	backups := backupsBeside(t, path)
+	if len(backups) != 1 {
+		t.Fatalf("found %d backups of the file it replaced, want 1: %v", len(backups), backups)
+	}
+	if content, err := os.ReadFile(backups[0]); err != nil || !strings.Contains(string(content), "1.0.100") {
+		t.Errorf("the backup does not hold what the file said before: %q %v", content, err)
+	}
+
+	// The second run: the machine has not moved, so there is nothing to write —
+	// and nothing is written, including no second backup.
+	if code := s.run("plugins", "capture"); code != 0 {
+		t.Fatalf("the second capture exited %d: %s", code, s.output())
+	}
+	if !strings.Contains(s.stdout.String(), "nothing was written") {
+		t.Errorf("the second capture did not report an unchanged machine: %s", s.stdout.String())
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(after) != string(captured) {
+		t.Errorf("the second capture rewrote the file:\n%s\nwas\n%s", after, captured)
+	}
+	if again := backupsBeside(t, path); len(again) != 1 {
+		t.Errorf("the second capture left %d backups, want the 1 from the first: %v", len(again), again)
+	}
+
+	// The positive case the "nothing was written" refusal owes: move the
+	// machine, and the identical command writes again.
+	s.writeLivePlugins(t, "1.0.200")
+	if code := s.run("plugins", "capture"); code != 0 {
+		t.Fatalf("the third capture exited %d: %s", code, s.output())
+	}
+	moved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(moved), "1.0.200") {
+		t.Errorf("a machine that moved was not captured:\n%s", moved)
+	}
+}
+
+// backupsBeside is every timestamped backup petkit left next to a file.
+func backupsBeside(t *testing.T, path string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("read %s: %v", filepath.Dir(path), err)
+	}
+	var found []string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), filepath.Base(path)+".petkit-backup-") {
+			found = append(found, filepath.Join(filepath.Dir(path), entry.Name()))
+		}
+	}
+	return found
+}
+
 // homeTree is every path under the home directory with what kind of thing it
 // is. Symlinks are reported as symlinks rather than followed, because whether
 // one appeared is the whole question setup has to answer.

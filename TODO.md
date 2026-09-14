@@ -56,10 +56,10 @@ defect fixed in `internal/link` is still `SETT`.
 | `MFST-005` | done | A backslash in a target or source escaped the home directory on Windows and passed validation on macOS; refused everywhere, and the `/`→separator conversion is now explicit and watchable from here |
 | `MFST-002` | open | `kind:` is decorative — nothing behaves differently per kind, so it is either a rule or a comment |
 | `SETT-001` | done | The settings fragment and its merge |
-| `SETT-002` | open | Nothing notices when a machine's `settings.json` drifts from the fragment |
+| `SETT-002` | done | Nothing noticed settings drift until it was asked: `status` now carries one line saying whether the live file is in step with the fragment, drifted (and in how many keys), or absent |
 | `PLUG-001` | done | The plugin list and `plugins plan` |
-| `PLUG-004` | open | `settings/plugins.json` was reduced by hand and nothing reproduces it — the obvious rebuild copies `installed_plugins.json`, whose `projectPath` is an absolute path into whatever repository a plugin was installed for |
-| `PLUG-002` | open | Two machines can end up on different plugin versions and the manifest cannot say otherwise |
+| `PLUG-004` | done | `petkit plugins capture` reproduces `settings/plugins.json` from the live files, reduced to `{id, scope, version}` plus each marketplace's source — and a test feeds it a `projectPath` and searches the written bytes for it |
+| `PLUG-002` | done | `claude plugin install` has no version flag, so a version cannot be pinned: the field is relabelled **last seen** — a reading a machine can notice it is behind, not a target |
 | `CLI-001` | done | The command surface and the version rule |
 | `CLI-003` | done | The command surface moved to `urfave/cli/v3` — every documented message byte-identical, and an undefined flag is now refused instead of silently ignored |
 | `CLI-004` | done | `petkit version` printed a whole pseudo-version on a dirty tree: `+dirty` is build metadata and the anchored pattern did not allow for it |
@@ -67,7 +67,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-006` | done | `CLAUDE_CONFIG_DIR` is honoured — petkit hard-coded `~/.claude`, so a machine that sets it was having everything installed where nothing reads it. Wrong on every OS, not only Windows |
 | `CLI-007` | done | A missing git said `executable file not found in %PATH%`; it now names git and says what needs it |
 | `CLI-002` | open | A binary can now clone itself a repository, but `check` still fails without one — what is left is whether it should answer from the tags API instead |
-| `CLI-010` | open | The repository is resolved by walking up from the working directory FIRST, so running petkit from inside a different clone silently repoints every link to that clone |
+| `CLI-010` | done | The resolution was invisible: `status`, `sync`, `doctor` and `check` now open with which repository they resolved and how, and say both when the walked-up one is not the one `init` recorded |
 | `CLI-009` | open | Nothing has ever run on Windows — the port is compile-checked and unit-checked from macOS, and the machine itself is unmeasured |
 | `DOC-001` | done | The fourteen stale copies were not shadowing anything — the plugin was installed project-scoped to another project and did not load here at all. Installed at user scope, the thirteen copies backed up and removed |
 | `LINK-003` | refused | Installing by copy instead of by symlink |
@@ -105,6 +105,44 @@ defect fixed in `internal/link` is still `SETT`.
   records it through `petkit init`'s own recorder, and prints what `status`
   would print plus the next command. ⚠️ It **creates no symlink** without
   `--sync`, and it overwrites nothing: the target must be missing or empty.
+
+- `PLUG-004` **`petkit plugins capture`.** `settings/plugins.json` is rebuilt
+  from the live `~/.claude/plugins/{known_marketplaces.json,installed_plugins.json}`
+  — through the `Layout`, so `CLAUDE_CONFIG_DIR` is honoured — reduced to
+  `{id, scope, version}` per plugin plus each marketplace's source. ⚠️ **The
+  reduction is enforced by the types**: the live-file structs do not declare
+  `projectPath`, `installPath`, `installLocation`, `installedAt`, `lastUpdated`
+  or `gitCommitSha`, so those are never read, and the test feeds a `projectPath`
+  in and searches **the bytes that would be written** for it. It writes into the
+  repository, so it goes through `settings apply`'s backup → temp → rename, and
+  it prints what moved; a run that changes nothing writes nothing.
+
+- `PLUG-002` **The recorded version is a reading, not a pin.** Measured
+  2026-09-14: `claude plugin install --help` offers `--config`, `--json`,
+  `-s/--scope`, `-y/--yes` and **no version flag at all**, so there is nothing to
+  pin a version to. The field is therefore relabelled **last seen** — in
+  `settings/README.md`, in the `Plugin` type, and in both lines of
+  `plugins plan` that show a version — and kept, because a recorded reading is
+  how a machine notices it is running something older. ⚠️ No pinning mechanism
+  was invented and the field was not dropped.
+
+- `SETT-002` **`status` notices settings drift.** One line at the end of
+  `petkit status`: the live settings file is `in step with the fragment`,
+  `has drifted … in N key(s)`, or `is absent`. It is `settings diff`'s own
+  comparison (`settings.Inspect`, which both commands call), not a second one —
+  a second comparison would be free to disagree with the command the line tells
+  you to run. ⚠️ `status` still exits **0** on every path through it, including
+  the paths where the comparison cannot be made at all.
+
+- `CLI-010` **The resolved repository is visible.** `status`, `sync`, `doctor`
+  and `check` open with one line — always — saying which repository they resolved
+  and how: `walked up from the working directory`, `$PETKIT_HOME`, or
+  `recorded by petkit init`. ⚠️ When the walked-up repository is **not** the one
+  `init` recorded, the line says both, because that is the case where `sync`
+  repoints every link into a clone nobody chose. Not applied to `version` (it
+  already names the manifest path) or `setup` (it prints the clone it just made).
+  ⚠️ The resolution **order** is unchanged on purpose: making the recorded path
+  win would break a fresh checkout being usable before `init`.
 
 - `LINK-004` / `LINK-005` / `MFST-005` / `CLI-006` / `CLI-007` **Windows.** The
   tool is now written to be correct on Windows: the symlink privilege refusal is
@@ -148,56 +186,6 @@ defect fixed in `internal/link` is still `SETT`.
       no field: the next person adds `kind: script` and reasonably expects it to
       change something.
 
-- [ ] `SETT-002` **Nothing notices when a machine's `settings.json` drifts from
-      the fragment.** Raised 2026-09-14 with the first version.
-
-      `settings diff` answers the question when asked, and nothing asks it. A
-      machine where the fragment was applied months ago and `skillOverrides` has
-      since been edited by hand reports `linked` on every skill and is still not
-      the machine the repository describes. ⚠️ This is **not** a symlink problem —
-      the settings file is genuinely merged, not linked, because it holds
-      machine-local keys the repository must not own.
-
-      **What closing it needs.** A drift line in `status` (the shared exit path),
-      or a decision that `settings diff` on demand is enough — with the reason.
-
-- [ ] `PLUG-002` **Two machines can end up on different plugin versions and the
-      manifest cannot say otherwise.** Raised 2026-09-14 with the first version.
-
-      `settings/plugins.json` captured what this machine had on 2026-09-13,
-      versions included — and one of the nine is recorded as a **commit sha**
-      rather than a version, because that is what its marketplace publishes. But
-      `plugins plan` prints `claude plugin install <id>`, which takes whatever the
-      marketplace offers today, and at least one marketplace entry carries
-      `autoUpdate: true`.
-      So the recorded version is a **reading, not a pin**.
-
-      ⚠️ Do not "fix" this by pinning without checking that `claude plugin install`
-      accepts a version at all — if it does not, the honest close is to relabel the
-      field as *last seen* and stop implying it is a target.
-
-- [ ] `PLUG-004` ⚠️ **`settings/plugins.json` was reduced by hand, and the obvious
-      way to rebuild it leaks a path.** Raised 2026-09-14, out of the question of
-      whether this repository can be made public.
-
-      **What is wrong.** The file records `{id, scope, version}` per plugin. Its
-      source, `~/.claude/plugins/installed_plugins.json`, records more — every
-      project-scoped entry carries a `projectPath`, an absolute path into the
-      repository the plugin was installed for — which on a work machine is a path
-      nobody wants published. The current file is clean **because it was reduced by
-      hand**, and nothing in the repository performs or enforces that reduction.
-
-      ⚠️ **This matters whether or not the repository is public.** A private
-      repository is still shared with whoever is added to it, and a path is the
-      kind of thing that is copied into an issue or a screenshot without thought.
-
-      **What closing it needs.** A `petkit plugins capture` that reads the live
-      files, writes exactly the three fields, and refuses to write anything it does
-      not recognise — plus a test that feeds it an `installed_plugins.json`
-      containing a `projectPath` and asserts the output does not contain it.
-      ⚠️ The test is the point. A capture command whose reduction is only asserted
-      by reading the code is the same hand-reduction with more steps.
-
 - [ ] `CLI-002` **`check` still needs a clone.** Raised 2026-09-14 with the first
       version, **measured the same day**; the premise moved under it when
       `CLI-005` shipped.
@@ -233,42 +221,6 @@ defect fixed in `internal/link` is still `SETT`.
       **What closing it needs.** Either `check` falls back to the GitHub tags API
       when there is no repository, or its error names both ways out in one
       sentence — which is cheap and might be the whole answer.
-
-- [ ] `CLI-010` ⚠️ **Running petkit from inside a different clone silently
-      repoints every link to that clone.** Found 2026-09-14 while measuring
-      `CLI-009`'s own invariant on a fresh install, and it is not the defect that
-      invariant is about.
-
-      **What happens.** The repository is resolved by walking up from the working
-      directory first, then `$PETKIT_HOME`, then the path `init` recorded. So a
-      machine that has been set up at one path, whose shell happens to sit inside
-      *another* clone, gets the other one — with no warning, because from petkit's
-      side nothing is wrong:
-
-      ```
-      $ petkit setup --sync /tmp/e2e4/clone      # records /tmp/e2e4/clone
-      create  skill/writing-todo  ~/.claude/skills/writing-todo -> /tmp/e2e4/clone/…
-
-      $ cd /somewhere/else/petkit && petkit sync  # a second clone, not the recorded one
-      repoint skill/writing-todo  ~/.claude/skills/writing-todo -> /somewhere/else/petkit/…
-                                  (was /tmp/e2e4/clone/…)
-      ```
-
-      From a neutral working directory the same command is correct and idempotent
-      — measured immediately afterwards: `nothing to do; every item is already
-      linked`, exit 0. **So the comparison is right and the resolution order is the
-      subject.**
-
-      ⚠️ **This is the documented order doing exactly what it says**, which is why
-      it is filed rather than patched in a hurry. Walking up is what makes petkit
-      work inside a checkout with no `init` at all, and that is worth keeping.
-
-      **What closing it needs, and the trap in each option.** Either `sync` says
-      which repository it resolved and how (one line, always — cheap, and it makes
-      every future report self-explaining), or a walked-up repository that is *not*
-      the recorded one asks before repointing. ⚠️ Do not "fix" it by making the
-      recorded path win: that breaks a fresh checkout being usable before `init`,
-      which is the case the walk-up exists for.
 
 - [ ] `CLI-009` ⚠️ **Nothing has ever run on Windows.** Raised 2026-09-14 with
       the port that made the code correct there.

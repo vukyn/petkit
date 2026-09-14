@@ -1,2 +1,8 @@
 bin/
 .code-review-graph/
+
+# `petkit plugins capture` backs up settings/plugins.json beside itself before
+# replacing it, the same way `settings apply` backs up a user's settings file.
+# The backup is a local safety copy of a tracked file; git already has the old
+# version.
+*.petkit-backup-*

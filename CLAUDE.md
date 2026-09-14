@@ -44,7 +44,14 @@ rule moved.
   a test that puts an unrelated nested object in the live file and asserts it
   survives.
 - **`plugins plan` prints and never executes.** `claude plugin` owns installation;
-  this repository owns the list.
+  this repository owns the list. `plugins capture` is the one writer of that list,
+  and it writes **only** `{id, scope, version}` per plugin plus each marketplace's
+  source — the live files carry absolute paths (`projectPath`, `installPath`,
+  `installLocation`) and none of them may reach the repository. ⚠️ That reduction
+  is held by a test which searches the written **bytes**, not the struct.
+- **A recorded plugin version is a reading, not a pin.** `claude plugin install`
+  has no version flag; do not invent one, and do not drop the field either — it is
+  how a machine notices it is behind.
 
 ## Curation — the reason this repository is small
 
