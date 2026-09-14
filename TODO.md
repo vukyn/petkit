@@ -55,14 +55,14 @@ defect fixed in `internal/link` is still `SETT`.
 | `SETT-001` | done | The settings fragment and its merge |
 | `SETT-002` | open | Nothing notices when a machine's `settings.json` drifts from the fragment |
 | `PLUG-001` | done | The plugin list and `plugins plan` |
-| `PLUG-004` | open | `settings/plugins.json` was reduced by hand and nothing reproduces it — the obvious rebuild copies `installed_plugins.json`, whose `projectPath` is an absolute path into an employer's repository |
+| `PLUG-004` | open | `settings/plugins.json` was reduced by hand and nothing reproduces it — the obvious rebuild copies `installed_plugins.json`, whose `projectPath` is an absolute path into whatever repository a plugin was installed for |
 | `PLUG-002` | open | Two machines can end up on different plugin versions and the manifest cannot say otherwise |
 | `CLI-001` | done | The command surface and the version rule |
 | `CLI-002` | open | `go install` works (with `GOPRIVATE`), but a binary with no clone can only answer `version` — measured; what is left is whether `check` should reach the tags API |
 | `DOC-001` | open | Fourteen stale skill copies still sit in `~/.claude/skills`, and it is unmeasured whether they shadow the plugin's own |
 | `LINK-003` | refused | Installing by copy instead of by symlink |
 | `PLUG-003` | refused | Installing plugins ourselves instead of printing `claude plugin` commands |
-| `MFST-003` | refused | Tracking pet-platform's agents, commands and scripts |
+| `MFST-003` | refused | Tracking another repository's agents, commands and scripts |
 
 ## Done
 
@@ -133,10 +133,11 @@ defect fixed in `internal/link` is still `SETT`.
       manifest cannot say otherwise.** Raised 2026-09-14 with the first version.
 
       `settings/plugins.json` captured what this machine had on 2026-09-13,
-      versions included (`context-mode 1.0.169`, `ui-ux-pro-max 2.13.0`,
-      `caveman 15581d14007f` — a commit sha, not a version). But `plugins plan`
-      prints `claude plugin install <id>`, which takes whatever the marketplace
-      offers today, and `caveman` has `autoUpdate: true` in its marketplace entry.
+      versions included — and one of the nine is recorded as a **commit sha**
+      rather than a version, because that is what its marketplace publishes. But
+      `plugins plan` prints `claude plugin install <id>`, which takes whatever the
+      marketplace offers today, and at least one marketplace entry carries
+      `autoUpdate: true`.
       So the recorded version is a **reading, not a pin**.
 
       ⚠️ Do not "fix" this by pinning without checking that `claude plugin install`
@@ -150,9 +151,9 @@ defect fixed in `internal/link` is still `SETT`.
       **What is wrong.** The file records `{id, scope, version}` per plugin. Its
       source, `~/.claude/plugins/installed_plugins.json`, records more — every
       project-scoped entry carries a `projectPath`, an absolute path into the
-      repository the plugin was installed for. On this machine one of them points
-      at an employer's project. The current file is clean **because it was reduced
-      by hand**, and nothing in the repository performs or enforces that reduction.
+      repository the plugin was installed for — which on a work machine is a path
+      nobody wants published. The current file is clean **because it was reduced by
+      hand**, and nothing in the repository performs or enforces that reduction.
 
       ⚠️ **This matters whether or not the repository is public.** A private
       repository is still shared with whoever is added to it, and a path is the
@@ -192,26 +193,25 @@ defect fixed in `internal/link` is still `SETT`.
       when there is no repository, or its error says exactly that in one sentence
       — which is cheap and might be the whole answer.
 
-- [ ] `DOC-001` ⚠️ **Fourteen stale skill copies still sit in `~/.claude/skills`,
-      and it is unmeasured whether they shadow the plugin's own.** Raised
-      2026-09-14 out of the curation that produced this repository.
+- [ ] `DOC-001` ⚠️ **Fourteen stale skill copies sit in the skills directory, and
+      it is unmeasured whether they shadow the plugin's own.** Raised 2026-09-14
+      out of the curation that produced this repository.
 
-      **What is known.** `~/.claude/skills` holds fourteen directories that are
-      older copies of skills the installed `superpowers` plugin also provides.
-      Measured 2026-09-13: the plugin's `writing-plans/SKILL.md` carries a
-      *Task Right-Sizing* section the local copy lacks, and its `brainstorming` is
-      92K against the local 64K. Six of the fourteen are `off` in
-      `settings/fragment.json`, which means eight are live.
+      **What is known.** The skills directory holds fourteen entries that are older
+      copies of skills an installed plugin also provides. Measured: one plugin copy
+      carries a whole section its local twin lacks, and another is 92K against the
+      local 64K. Six of the fourteen are `off` in `settings/fragment.json`, which
+      leaves **eight** live.
 
       ⚠️ **What is NOT known is which copy wins** when a personal skill directory
-      and a plugin skill share a name. If the local one shadows, then nine skills
-      are silently running an old version on this machine, and that is a defect
-      with a fix (delete them) rather than untidiness. If the plugin wins, they are
-      dead weight and the fix is the same but the urgency is not.
+      and a plugin skill share a name. If the local one shadows, those eight are
+      silently running an old version, and that is a defect with a fix (delete
+      them) rather than untidiness. If the plugin wins, they are dead weight and
+      the fix is the same but the urgency is not.
 
       **What closing it needs.** One reading — invoke a shadowed skill and check
-      which text arrives (the *Task Right-Sizing* section is a one-word probe) —
-      then delete the fourteen, or record why they stay. ⚠️ `petkit` must not do
+      which text arrives; a section that exists in only one of the two copies is a
+      one-word probe — then delete the fourteen, or record why they stay. ⚠️ `petkit` must not do
       the deleting: they are not its items, and a tool that removes things it does
       not manage is exactly what `LINK-002` refuses.
 
@@ -235,10 +235,10 @@ defect fixed in `internal/link` is still `SETT`.
   — the thing `claude plugin` does not keep across machines. ⚠️ Re-raise only with
   a concrete failure of the printed-commands flow, not with "it would be nicer".
 
-- `MFST-003` **Tracking pet-platform's agents, commands and scripts.** Eight
-  agents, five commands and two scripts were considered and left where they are:
-  they are addressed *relative to the repository that owns them* —
-  `$CLAUDE_PROJECT_DIR/scripts/security-scan-check.sh` in a hook,
-  `$(SCRIPTS)/hosts.sh` in the Makefile — and arrive on every machine with
-  `git clone`. A copy here would be a second version of a tracked file with no
-  reader. ⚠️ Re-raise only for a piece that stops being repository-scoped.
+- `MFST-003` **Tracking another repository's agents, commands and scripts.**
+  Eight agents, five commands and two scripts were considered and left where they
+  are: each is addressed *relative to the repository that owns it* —
+  `$CLAUDE_PROJECT_DIR/scripts/<name>.sh` in a hook, a `$(SCRIPTS)` variable in a
+  Makefile — and arrives on every machine with `git clone`. A copy here would be a
+  second version of a tracked file with no reader. ⚠️ Re-raise only for a piece
+  that stops being repository-scoped.

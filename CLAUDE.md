@@ -6,9 +6,8 @@ Guidance for Claude Code when working in this repository.
 
 `petkit` keeps one person's Claude Code setup — skills, a settings fragment, a
 plugin list — in git, and installs it into `~/.claude` by **symlink**. It is a
-standalone CLI, not a pet-platform service: no domains, no DI, no Fiber, no
-database, no UI. The platform's clean-architecture conventions do not apply here,
-the same way they do not apply to `sgo`, `gobuild`, `speedtest` or `hexarena`.
+standalone CLI: no domains, no DI, no web framework, no database, no UI. Whatever
+service conventions the surrounding workspace carries do not apply here.
 
 `TODO.md` is the open list, and every item in it carries a permanent code
 (`AREA-NNN`). Name an item by its **code** in a commit, a PR or a note, never by
@@ -53,8 +52,8 @@ What is *not* tracked was measured and rejected, and the reasons are in
 `petkit.yaml` beside the items and in `README.md` § *What belongs here*. The short
 form: **a second copy of a file that already has an owner is a fork nobody is
 watching.** Fourteen local skills are stale copies of an installed plugin; three
-hook scripts are redeployed by the tools that own them; pet-platform's agents and
-commands are addressed relative to that repository and travel with its clone.
+hook scripts are redeployed by the tools that own them; agents and commands are
+addressed relative to the repository that owns them and travel with its clone.
 
 ⚠️ Before adding an item, answer the question those three refusals answer: **who
 else writes this file?** If anything does, the item does not belong here.
@@ -76,5 +75,6 @@ works; it is a line somebody believes in.
 
 ⚠️ The `gofmt` step is written to capture output and exit 1 on a non-empty
 result. `gofmt -l .` **prints the offending file and exits 0**, so the obvious
-spelling of that step gates nothing — it shipped that way in `hexarena`'s
-Makefile and nobody noticed until CI was added months later.
+spelling of that step gates nothing. That defect is easy to ship and hard to
+notice: the target stays green while the check does nothing, and only a CI run
+against an unformatted tree reveals it.

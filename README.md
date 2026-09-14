@@ -3,9 +3,9 @@
 One machine's Claude Code setup, kept in a repository and installed by **symlink**.
 
 ```sh
-git clone git@github.com:vukyn/petkit.git ~/vukyn/repo/pet-platform/petkit
-cd ~/vukyn/repo/pet-platform/petkit
-go install ./cmd/petkit        # the clone is the source; see below
+git clone <this repository> ~/src/petkit   # anywhere; the path is yours to pick
+cd ~/src/petkit
+go install ./cmd/petkit                    # the clone is the source; see below
 petkit init . && petkit sync
 ```
 
@@ -80,16 +80,16 @@ every machine. Today that is two skills.
 
 **Not here**, with the reason each was measured and rejected on 2026-09-13:
 
-- **Fourteen skills** under `~/.claude/skills` are stale copies of the
-  `superpowers` plugin, which updates itself. The installed 6.3.0 `writing-plans`
-  carries a section the local copy lacks; `brainstorming` is 92K there against 64K
-  locally. Six of the fourteen are already `off` in the settings fragment.
-- **Three hook scripts** are deployed by their own tools — rtk stamps a version
-  into `rtk-rewrite.sh`, `claude-island-state.py` belongs to ClaudeIsland.app, and
-  `context-mode-cache-heal.mjs` says *"auto-deployed"* in its second line. A copy
-  here would be overwritten by its owner without a word.
-- **pet-platform's 8 agents, 5 commands and 2 scripts** are addressed relative to
-  that repository (`$CLAUDE_PROJECT_DIR`, `$(SCRIPTS)`) and arrive with its clone.
+- **Fourteen skill directories** were older copies of skills an installed plugin
+  already provides — and that plugin updates itself. One local copy was missing a
+  whole section the plugin's copy carried; another was 64K against the plugin's
+  92K. Six of the fourteen were already `off` in the settings fragment.
+- **Three hook scripts** were written by the tools that deploy them — one stamps
+  its own version number into the file it writes. A copy here would be overwritten
+  by its owner without a word.
+- **Agents, commands and repository scripts** are addressed relative to the
+  repository that owns them (`$CLAUDE_PROJECT_DIR`, a Makefile variable) and
+  arrive on every machine with `git clone`.
 
 The rule behind all three: **a second copy of a file that already has an owner is
 not a backup, it is a fork that nobody is watching.** `petkit.yaml` records these

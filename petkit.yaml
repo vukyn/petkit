@@ -15,8 +15,8 @@ items:
     source: skills/writing-todo
     target: ~/.claude/skills/writing-todo
     note: |
-      Authored 2026-09-13 out of hexarena's TODO.md. Not in any plugin cache —
-      this repository is its only home.
+      Writes and maintains a repository's TODO.md as a coded index of open work.
+      Not provided by any plugin — this repository is its only home.
 
   - id: skill/todo-checklist
     kind: skill
@@ -28,21 +28,24 @@ items:
 
 # ── What is deliberately NOT here ────────────────────────────────────────────
 #
-# Fourteen skills under ~/.claude/skills are stale copies of the `superpowers`
-# plugin, which is installed and versioned upstream: on 2026-09-13 the installed
-# 6.3.0 copy of writing-plans carried a whole section (Task Right-Sizing) the
-# local copy lacked, and brainstorming was 92K against the local 64K. Six of the
-# fourteen are already `off` in settings/fragment.json. Tracking them here would
-# fork a plugin that updates itself.
+# The test an item has to pass is one question: **who else writes this file?**
+# If anything does, the item does not belong here — a second copy of a file that
+# already has an owner is not a backup, it is a fork nobody is watching.
 #
-# Two more (computer-use, orchestration) are symlinks into ~/.agents/skills, and
-# `orchestration` is BROKEN — its target does not exist.
+# Three kinds fail that test, and all three were found in a real skills directory
+# when this manifest was first written:
 #
-# All three files in ~/.claude/hooks are deployed by their own tools: rtk stamps
-# `rtk-hook-version: 3` into rtk-rewrite.sh, claude-island-state.py belongs to
-# ClaudeIsland.app, and context-mode-cache-heal.mjs says "auto-deployed" on line 2.
-# A second copy here would be overwritten by its real owner without warning.
+#   1. A skill a PLUGIN already provides. Fourteen directories were older copies
+#      of an installed plugin's own skills — one of them missing a whole section
+#      the plugin's copy carried, another 64K against the plugin's 92K. Tracking
+#      them would fork something that updates itself.
+#   2. A file another TOOL deploys. Three hook scripts were written by the tools
+#      that install them; one stamps its own version number into the file. A copy
+#      here would be overwritten by its real owner without a word.
+#   3. A file a REPOSITORY owns. Agents, commands and scripts addressed relative
+#      to their repository ($CLAUDE_PROJECT_DIR, a Makefile variable) arrive on
+#      every machine with `git clone` and need nothing from here.
 #
-# pet-platform's 8 agents, 5 commands and 2 scripts stay in pet-platform: they are
-# addressed relative to that repository ($CLAUDE_PROJECT_DIR, $(SCRIPTS)) and
-# travel with its clone.
+# ⚠️ Two of those fourteen were symlinks into another tool's directory, and one
+# of the two was BROKEN — pointing at a path that did not exist. `petkit doctor`
+# reports that shape; it does not repair it, because the link is not its item.
