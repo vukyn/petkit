@@ -1,6 +1,7 @@
 package version_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/vukyn/petkit/internal/version"
@@ -29,5 +30,32 @@ func TestATagIsLeftWholeAndAPseudoVersionBecomesItsRevision(t *testing.T) {
 func TestCurrentAlwaysSaysSomething(t *testing.T) {
 	if version.Current() == "" {
 		t.Error("the version is empty")
+	}
+}
+
+// A build from a dirty working tree carries `+dirty` after the revision. The
+// pattern is anchored, so before this was allowed for, the suffix stopped the
+// match and Format returned the whole pseudo-version where a revision was meant.
+func TestADirtyPseudoVersionIsStillTrimmedToItsRevision(t *testing.T) {
+	for _, raw := range []string{
+		"v0.1.1-0.20260914063411-8d81ea5ae0fd+dirty",
+		"v0.0.0-20260914063411-8d81ea5ae0fd+dirty",
+	} {
+		got := version.Format(raw)
+		if !strings.HasPrefix(got, "8d81ea5ae0fd") {
+			t.Errorf("Format(%q) = %q, want it trimmed to the revision", raw, got)
+		}
+		if strings.Contains(got, "20260914063411") {
+			t.Errorf("Format(%q) = %q, still carries the timestamp", raw, got)
+		}
+	}
+}
+
+// Its positive case: a real tag is never trimmed, with or without metadata.
+func TestATagWithBuildMetadataIsLeftWhole(t *testing.T) {
+	for _, raw := range []string{"v0.1.0", "v0.1.0+dirty"} {
+		if got := version.Format(raw); got != raw {
+			t.Errorf("Format(%q) = %q, want it left whole", raw, got)
+		}
 	}
 }

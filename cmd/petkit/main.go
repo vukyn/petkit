@@ -4,14 +4,16 @@
 package main
 
 import (
+	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"text/tabwriter"
 	"time"
+
+	"github.com/urfave/cli/v3"
 
 	"github.com/vukyn/petkit/internal/link"
 	"github.com/vukyn/petkit/internal/manifest"
@@ -30,6 +32,19 @@ type environment struct {
 	env        func(string) string
 	stdout     io.Writer
 	stderr     io.Writer
+}
+
+// environmentKey is where the environment is parked on the root command. urfave
+// hands some hooks nothing but a *cli.Command, so the command graph is the only
+// place they can find it.
+const environmentKey = "environment"
+
+func init() {
+	// urfave renders help and the version through package-level hooks. Both are
+	// replaced so that the framework prints what petkit printed before it: the
+	// help below, and `petkit version`.
+	cli.HelpPrinter = printHelp
+	cli.VersionPrinter = printVersion
 }
 
 func main() {
@@ -52,39 +67,15 @@ func main() {
 	}))
 }
 
+// run turns a command line into an exit code. urfave parses and dispatches;
+// what a failure is worth is still decided here, because the exit codes are
+// part of the interface: 2 for a usage error, 1 for a command that ran and
+// failed, 0 otherwise.
 func run(args []string, environment environment) int {
-	if len(args) == 0 {
-		usage(environment.stderr)
-		return 2
-	}
+	command := newRootCommand(environment)
 
-	var err error
-	switch args[0] {
-	case "version":
-		err = commandVersion(environment)
-	case "status":
-		err = commandStatus(environment)
-	case "sync":
-		err = commandSync(environment, args[1:])
-	case "doctor":
-		err = commandDoctor(environment)
-	case "settings":
-		err = commandSettings(environment, args[1:])
-	case "plugins":
-		err = commandPlugins(environment, args[1:])
-	case "check":
-		err = commandCheck(environment)
-	case "init":
-		err = commandInit(environment, args[1:])
-	case "help", "-h", "--help":
-		usage(environment.stdout)
-		return 0
-	default:
-		fmt.Fprintf(environment.stderr, "petkit: unknown command %q\n\n", args[0])
-		usage(environment.stderr)
-		return 2
-	}
-
+	// urfave expects the program name in position zero, the way os.Args has it.
+	err := command.Run(context.Background(), append([]string{"petkit"}, args...))
 	if err != nil {
 		if errors.Is(err, errUsage) {
 			return 2
@@ -97,23 +88,243 @@ func run(args []string, environment environment) int {
 
 var errUsage = errors.New("usage")
 
-func usage(out io.Writer) {
+func newRootCommand(environment environment) *cli.Command {
+	root := &cli.Command{
+		Name:  "petkit",
+		Usage: "one machine's Claude Code setup, kept in a git repository and installed by symlink",
+
+		// The version is the git tag, read out of the build info at run time.
+		// There is no constant here to keep in step.
+		Version: version.Current(),
+
+		Writer:    environment.stdout,
+		ErrWriter: environment.stderr,
+		Metadata:  map[string]any{environmentKey: environment},
+
+		// An error is turned into an exit code by run. urfave must not also
+		// call os.Exit for it, which would take the tests down with it.
+		ExitErrHandler: func(context.Context, *cli.Command, error) {},
+		OnUsageError:   usageError(environment),
+
+		// Reached when the first argument names no command, and when there is
+		// no argument at all. Both are usage errors, and both print the help.
+		Action: func(_ context.Context, command *cli.Command) error {
+			if name := command.Args().First(); name != "" {
+				fmt.Fprintf(environment.stderr, "petkit: unknown command %q\n\n", name)
+			}
+			printHelp(environment.stderr, "", command)
+			return errUsage
+		},
+
+		// The order is the order the help lists them in.
+		Commands: []*cli.Command{
+			{
+				Name:         "version",
+				Usage:        "the build version and the manifest's item count",
+				OnUsageError: usageError(environment),
+				Action: func(context.Context, *cli.Command) error {
+					return commandVersion(environment)
+				},
+			},
+			{
+				Name:         "status",
+				Usage:        "one line per item: linked, missing, stale, conflict",
+				OnUsageError: usageError(environment),
+				Action: func(context.Context, *cli.Command) error {
+					return commandStatus(environment)
+				},
+			},
+			{
+				Name:         "sync",
+				Usage:        "create missing links, repoint stale ones",
+				UsageText:    "petkit sync [--dry-run]",
+				OnUsageError: usageError(environment),
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "dry-run",
+						Usage: "print the plan and change nothing",
+					},
+				},
+				Action: func(_ context.Context, command *cli.Command) error {
+					return commandSync(environment, command.Bool("dry-run"))
+				},
+			},
+			{
+				Name:         "doctor",
+				Usage:        "the checks that are not about one item",
+				OnUsageError: usageError(environment),
+				Action: func(context.Context, *cli.Command) error {
+					return commandDoctor(environment)
+				},
+			},
+			{
+				Name:         "settings",
+				Usage:        "what merging settings/fragment.json would change, or the merge itself",
+				UsageText:    "petkit settings <diff|apply>",
+				OnUsageError: usageError(environment),
+				Commands: []*cli.Command{
+					{
+						Name:         "diff",
+						Usage:        "what merging settings/fragment.json would change",
+						UsageText:    "petkit settings diff",
+						OnUsageError: usageError(environment),
+						Action: func(context.Context, *cli.Command) error {
+							return withFragment(environment, settingsDiff)
+						},
+					},
+					{
+						Name:         "apply",
+						Usage:        "merge it, after a timestamped backup",
+						UsageText:    "petkit settings apply",
+						OnUsageError: usageError(environment),
+						Action: func(context.Context, *cli.Command) error {
+							return withFragment(environment, settingsApply)
+						},
+					},
+				},
+				// Reached only when the subcommand is missing or unnamed: a
+				// recognised one is dispatched before this runs.
+				Action: func(_ context.Context, command *cli.Command) error {
+					if name := command.Args().First(); name != "" {
+						fmt.Fprintf(environment.stderr,
+							"petkit settings: unknown subcommand %q; say diff or apply\n", name)
+						return errUsage
+					}
+					fmt.Fprintln(environment.stderr, "petkit settings: say diff or apply")
+					return errUsage
+				},
+			},
+			{
+				Name:         "plugins",
+				Usage:        "the claude commands that would match the manifest",
+				UsageText:    "petkit plugins plan",
+				OnUsageError: usageError(environment),
+				Commands: []*cli.Command{
+					{
+						Name:         "plan",
+						Usage:        "the claude commands that would match the manifest",
+						UsageText:    "petkit plugins plan",
+						OnUsageError: usageError(environment),
+						Action: func(context.Context, *cli.Command) error {
+							return commandPluginsPlan(environment)
+						},
+					},
+				},
+				Action: func(context.Context, *cli.Command) error {
+					fmt.Fprintln(environment.stderr,
+						"petkit plugins: say plan (petkit never installs anything itself)")
+					return errUsage
+				},
+			},
+			{
+				Name:         "check",
+				Usage:        "the tag this checkout is on, and the newest there is",
+				OnUsageError: usageError(environment),
+				Action: func(context.Context, *cli.Command) error {
+					return commandCheck(environment)
+				},
+			},
+			{
+				Name:         "init",
+				Usage:        "record where the repository lives",
+				UsageText:    "petkit init [path]",
+				OnUsageError: usageError(environment),
+				Action: func(_ context.Context, command *cli.Command) error {
+					return commandInit(environment, command.Args().First())
+				},
+			},
+		},
+	}
+	return root
+}
+
+// usageError reports a command line urfave could not parse the way an unknown
+// command is reported: named, on stderr, and worth exit code 2 rather than the
+// 1 a command that ran and failed is worth.
+func usageError(environment environment) cli.OnUsageErrorFunc {
+	return func(_ context.Context, command *cli.Command, err error, _ bool) error {
+		fmt.Fprintf(environment.stderr, "%s: %v\n", command.FullName(), err)
+		return errUsage
+	}
+}
+
+// printVersion answers `petkit --version`. `petkit version` is the authority on
+// what a version looks like, so the flag runs the same code rather than urfave's
+// own one-liner.
+func printVersion(command *cli.Command) {
+	if recorded, ok := command.Root().Metadata[environmentKey].(environment); ok {
+		_ = commandVersion(recorded)
+	}
+}
+
+// printHelp replaces urfave's help for the root command only; a subcommand's
+// help is still urfave's.
+func printHelp(out io.Writer, template string, data any) {
+	command, ok := data.(*cli.Command)
+	if !ok || command.Root() != command {
+		cli.DefaultPrintHelp(out, template, data)
+		return
+	}
+	usage(out, command)
+}
+
+// usage prints the summary of the whole tool. The command list is read out of
+// the command graph rather than written out here, so a command that is dropped
+// from the graph disappears from the help with it — a help text that is a
+// literal is a second list nobody keeps in step.
+func usage(out io.Writer, root *cli.Command) {
 	fmt.Fprint(out, `petkit — one machine's Claude Code setup, kept in a git repository and
 installed by symlink.
 
-  petkit version            the build version and the manifest's item count
-  petkit status             one line per item: linked, missing, stale, conflict
-  petkit sync [--dry-run]   create missing links, repoint stale ones
-  petkit doctor             the checks that are not about one item
-  petkit settings diff      what merging settings/fragment.json would change
-  petkit settings apply     merge it, after a timestamped backup
-  petkit plugins plan       the claude commands that would match the manifest
-  petkit check              the tag this checkout is on, and the newest there is
-  petkit init [path]        record where the repository lives
-
+`)
+	writer := tabwriter.NewWriter(out, 0, 0, 3, ' ', 0)
+	for _, line := range usageLines(root) {
+		fmt.Fprintf(writer, "  %s\t%s\n", line.invocation, line.summary)
+	}
+	_ = writer.Flush()
+	fmt.Fprint(out, `
 The repository is found by walking up from the working directory looking for
 petkit.yaml, then $PETKIT_HOME, then the path recorded by petkit init.
 `)
+}
+
+// usageLine is one row of the summary: how the command is typed, and what it
+// does.
+type usageLine struct {
+	invocation string
+	summary    string
+}
+
+// usageLines flattens the command graph one level: a command that has
+// subcommands is listed as its subcommands, because that is how it is typed.
+func usageLines(root *cli.Command) []usageLine {
+	var lines []usageLine
+	for _, command := range root.VisibleCommands() {
+		subcommands := command.VisibleCommands()
+		if len(subcommands) == 0 {
+			lines = append(lines, usageLine{
+				invocation: invocation(command, "petkit "+command.Name),
+				summary:    command.Usage,
+			})
+			continue
+		}
+		for _, subcommand := range subcommands {
+			lines = append(lines, usageLine{
+				invocation: invocation(subcommand, "petkit "+command.Name+" "+subcommand.Name),
+				summary:    subcommand.Usage,
+			})
+		}
+	}
+	return lines
+}
+
+// invocation is the command's UsageText where it has one, because that is where
+// the argument shape is written down.
+func invocation(command *cli.Command, fallback string) string {
+	if command.UsageText != "" {
+		return command.UsageText
+	}
+	return fallback
 }
 
 func locate(environment environment) (state.Location, error) {
@@ -170,14 +381,7 @@ func commandStatus(environment environment) error {
 	return writer.Flush()
 }
 
-func commandSync(environment environment, args []string) error {
-	flags := flag.NewFlagSet("sync", flag.ContinueOnError)
-	flags.SetOutput(environment.stderr)
-	dryRun := flags.Bool("dry-run", false, "print the plan and change nothing")
-	if err := flags.Parse(args); err != nil {
-		return errUsage
-	}
-
+func commandSync(environment environment, dryRun bool) error {
 	loaded, err := loadManifest(environment)
 	if err != nil {
 		return err
@@ -186,7 +390,7 @@ func commandSync(environment environment, args []string) error {
 	actions := link.Plan(link.Inspect(loaded, environment.home))
 
 	prefix := ""
-	if *dryRun {
+	if dryRun {
 		prefix = "would "
 	}
 	writer := tabwriter.NewWriter(environment.stdout, 0, 0, 2, ' ', 0)
@@ -209,14 +413,14 @@ func commandSync(environment environment, args []string) error {
 		return err
 	}
 
-	result, err := link.Apply(actions, *dryRun)
+	result, err := link.Apply(actions, dryRun)
 	if err != nil {
 		return err
 	}
 
 	if result.Changed == 0 && len(result.Refused) == 0 {
 		fmt.Fprintln(environment.stdout, "nothing to do; every item is already linked")
-	} else if !*dryRun {
+	} else if !dryRun {
 		fmt.Fprintf(environment.stdout, "%d change(s)\n", result.Changed)
 	}
 
@@ -260,12 +464,9 @@ func commandDoctor(environment environment) error {
 	return nil
 }
 
-func commandSettings(environment environment, args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintln(environment.stderr, "petkit settings: say diff or apply")
-		return errUsage
-	}
-
+// withFragment resolves the repository and reads the settings fragment, which
+// both settings subcommands need before they can say anything.
+func withFragment(environment environment, action func(environment environment, livePath string, fragment []byte) error) error {
 	location, err := locate(environment)
 	if err != nil {
 		return err
@@ -276,16 +477,7 @@ func commandSettings(environment environment, args []string) error {
 		return fmt.Errorf("cannot read %s: %w", fragmentPath, err)
 	}
 	livePath := filepath.Join(environment.home, ".claude", "settings.json")
-
-	switch args[0] {
-	case "diff":
-		return settingsDiff(environment, livePath, fragment)
-	case "apply":
-		return settingsApply(environment, livePath, fragment)
-	default:
-		fmt.Fprintf(environment.stderr, "petkit settings: unknown subcommand %q; say diff or apply\n", args[0])
-		return errUsage
-	}
+	return action(environment, livePath, fragment)
 }
 
 func settingsDiff(environment environment, livePath string, fragment []byte) error {
@@ -335,12 +527,7 @@ func settingsApply(environment environment, livePath string, fragment []byte) er
 	return nil
 }
 
-func commandPlugins(environment environment, args []string) error {
-	if len(args) == 0 || args[0] != "plan" {
-		fmt.Fprintln(environment.stderr, "petkit plugins: say plan (petkit never installs anything itself)")
-		return errUsage
-	}
-
+func commandPluginsPlan(environment environment) error {
 	location, err := locate(environment)
 	if err != nil {
 		return err
@@ -412,10 +599,10 @@ func commandCheck(environment environment) error {
 	return nil
 }
 
-func commandInit(environment environment, args []string) error {
+func commandInit(environment environment, path string) error {
 	candidate := environment.workingDir
-	if len(args) > 0 && args[0] != "" {
-		candidate = args[0]
+	if path != "" {
+		candidate = path
 	}
 	location, err := state.Init(candidate, environment.home)
 	if err != nil {
