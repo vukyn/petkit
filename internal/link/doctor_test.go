@@ -35,7 +35,7 @@ func TestDoctorReportsABrokenSymlinkUnderTheSkillsDirectory(t *testing.T) {
 		t.Fatalf("the fixture is not a broken symlink: stat gave %v", err)
 	}
 
-	findings := link.Doctor(loaded, m.home)
+	findings := link.Doctor(loaded, m.layout)
 	matched := findingsMentioning(findings, "orchestration")
 	if len(matched) != 1 {
 		t.Fatalf("doctor produced %d findings about orchestration, want 1: %v", len(matched), findings)
@@ -60,7 +60,7 @@ func TestDoctorIsSilentAboutAWorkingManagedLink(t *testing.T) {
 
 	mustSymlink(t, filepath.Join(m.root, "skills", "writing-todo"), m.targetOf("writing-todo"))
 
-	findings := link.Doctor(loaded, m.home)
+	findings := link.Doctor(loaded, m.layout)
 	if len(findings) != 0 {
 		t.Fatalf("doctor reported %v, want nothing", findings)
 	}
@@ -75,7 +75,7 @@ func TestDoctorReportsAnUnmanagedSkill(t *testing.T) {
 
 	mustWrite(t, filepath.Join(m.home, ".claude", "skills", "brainstorming", "SKILL.md"), "from a plugin")
 
-	findings := link.Doctor(loaded, m.home)
+	findings := link.Doctor(loaded, m.layout)
 	matched := findingsMentioning(findings, "brainstorming")
 	if len(matched) != 1 {
 		t.Fatalf("doctor produced %d findings about brainstorming, want 1: %v", len(matched), findings)
@@ -94,7 +94,7 @@ func TestDoctorReportsAManifestSourceThatIsNotThere(t *testing.T) {
 	m := newMachine(t)
 	loaded := m.manifestWith(skillItem("writing-todo")) // never created on disk
 
-	findings := link.Doctor(loaded, m.home)
+	findings := link.Doctor(loaded, m.layout)
 	matched := findingsMentioning(findings, "skill/writing-todo")
 	if len(matched) != 1 {
 		t.Fatalf("doctor produced %d findings about the missing source, want 1: %v", len(matched), findings)
@@ -105,7 +105,7 @@ func TestDoctorReportsAManifestSourceThatIsNotThere(t *testing.T) {
 
 	// The failing case: create the source and the problem goes away.
 	m.skill("writing-todo", "one")
-	if remaining := findingsMentioning(link.Doctor(loaded, m.home), "skill/writing-todo"); len(remaining) != 0 {
+	if remaining := findingsMentioning(link.Doctor(loaded, m.layout), "skill/writing-todo"); len(remaining) != 0 {
 		t.Errorf("the finding survived the fix: %v", remaining)
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vukyn/petkit/internal/manifest"
+	"github.com/vukyn/petkit/internal/ospath"
 	"github.com/vukyn/petkit/internal/state"
 )
 
@@ -20,6 +22,10 @@ type sandbox struct {
 	home   string
 	stdout *bytes.Buffer
 	stderr *bytes.Buffer
+
+	// env is the environment the commands read. Empty by default: a test that
+	// wants CLAUDE_CONFIG_DIR or PETKIT_HOME seen puts it in here.
+	env map[string]string
 
 	// clones is what the fake git was asked to do, in order. Nothing in these
 	// tests reaches the network: `clone` writes the same repository the sandbox
@@ -37,6 +43,7 @@ func newSandbox(t *testing.T) *sandbox {
 		home:   filepath.Join(base, "home"),
 		stdout: &bytes.Buffer{},
 		stderr: &bytes.Buffer{},
+		env:    map[string]string{},
 	}
 	writeRepository(t, s.root)
 	if err := os.MkdirAll(s.home, 0o755); err != nil {
@@ -70,13 +77,23 @@ func (s *sandbox) fakeGit(t *testing.T) state.Runner {
 	}
 }
 
+// layout is the sandbox's home directory described to the commands: this
+// platform's path rules, and no CLAUDE_CONFIG_DIR unless a test sets one.
+func (s *sandbox) layout() manifest.Layout {
+	return manifest.NewLayout(s.home, ospath.Current(), s.environ)
+}
+
+// environ is what the commands read the environment through. It answers "" for
+// everything until a test puts something in s.env.
+func (s *sandbox) environ(name string) string { return s.env[name] }
+
 func (s *sandbox) run(args ...string) int {
 	s.stdout.Reset()
 	s.stderr.Reset()
 	return run(args, environment{
-		home:       s.home,
+		layout:     s.layout(),
 		workingDir: s.root,
-		env:        func(string) string { return "" },
+		env:        s.environ,
 		stdout:     s.stdout,
 		stderr:     s.stderr,
 		git:        s.fakeGit(s.t),
@@ -218,9 +235,9 @@ func TestVersionAnswersWithoutARepository(t *testing.T) {
 	elsewhere := t.TempDir()
 
 	code := run([]string{"version"}, environment{
-		home:       s.home,
+		layout:     s.layout(),
 		workingDir: elsewhere,
-		env:        func(string) string { return "" },
+		env:        s.environ,
 		stdout:     s.stdout,
 		stderr:     s.stderr,
 	})
@@ -274,9 +291,9 @@ func TestInitLetsTheOtherCommandsRunFromAnywhere(t *testing.T) {
 		s.stdout.Reset()
 		s.stderr.Reset()
 		return run(args, environment{
-			home:       s.home,
+			layout:     s.layout(),
 			workingDir: elsewhere,
-			env:        func(string) string { return "" },
+			env:        s.environ,
 			stdout:     s.stdout,
 			stderr:     s.stderr,
 		})
@@ -631,5 +648,118 @@ func TestSetupRefusesAMachineThatIsAlreadySetUp(t *testing.T) {
 	// The positive case: naming somewhere else is an explicit second clone.
 	if code := s.run("setup", filepath.Join(s.base, "second")); code != 0 {
 		t.Errorf("setup refused an explicit second path: %s", s.output())
+	}
+}
+
+// Claude Code honours CLAUDE_CONFIG_DIR and petkit hard-coded ~/.claude, so on
+// a machine that sets it every link was installed into a directory nothing
+// reads: the tool reported success and the skills were never seen.
+//
+// ⚠️ This is a defect on every platform, not a Windows one. It is measured end
+// to end — through `sync` and `doctor`, not through the resolver — because the
+// hard-coded path was in the commands rather than in the manifest logic.
+func TestSyncInstallsIntoClaudeConfigDir(t *testing.T) {
+	s := newSandbox(t)
+	configDir := filepath.Join(s.base, "elsewhere-config")
+	s.env[manifest.EnvConfigDir] = configDir
+
+	if code := s.run("sync"); code != 0 {
+		t.Fatalf("sync exited %d: %s", code, s.output())
+	}
+
+	installed := filepath.Join(configDir, "skills", "writing-todo")
+	destination, err := os.Readlink(installed)
+	if err != nil {
+		t.Fatalf("nothing was installed at %s: %v", installed, err)
+	}
+	if want := filepath.Join(s.root, "skills", "writing-todo"); destination != want {
+		t.Errorf("the link points at %s, want %s", destination, want)
+	}
+	// ⚠️ And nothing was left in the directory the variable said not to use.
+	if _, err := os.Stat(filepath.Join(s.home, ".claude")); !os.IsNotExist(err) {
+		t.Error("sync also wrote into ~/.claude, which this machine does not read")
+	}
+
+	// doctor surveys the same directory, or it reports a managed item as an
+	// unmanaged stranger and an installed skill as missing.
+	if code := s.run("doctor"); code != 0 {
+		t.Fatalf("doctor exited %d: %s", code, s.output())
+	}
+	if strings.Contains(s.output(), "is not in the manifest") {
+		t.Errorf("doctor did not recognise the item it just installed: %s", s.output())
+	}
+	if strings.Contains(s.output(), "which is not there") {
+		t.Errorf("doctor reported a problem with a machine that has none: %s", s.output())
+	}
+}
+
+// The positive sibling: with the variable unset the links land in ~/.claude
+// exactly as they always did, so the variable adds a case rather than moving
+// the default.
+func TestWithoutClaudeConfigDirSyncStillInstallsIntoDotClaude(t *testing.T) {
+	s := newSandbox(t)
+
+	if code := s.run("sync"); code != 0 {
+		t.Fatalf("sync exited %d: %s", code, s.output())
+	}
+	if _, err := os.Readlink(filepath.Join(s.home, ".claude", "skills", "writing-todo")); err != nil {
+		t.Errorf("nothing was installed in ~/.claude: %v", err)
+	}
+}
+
+// The settings merge and the plugin survey read out of the same directory, so
+// they follow the variable too — a machine that moved its configuration should
+// not have half of petkit looking in the old place.
+func TestSettingsAndPluginsFollowClaudeConfigDir(t *testing.T) {
+	s := newSandbox(t)
+	configDir := filepath.Join(s.base, "elsewhere-config")
+	s.env[manifest.EnvConfigDir] = configDir
+	write(t, filepath.Join(s.root, "settings", "fragment.json"), `{"model": "opus"}`)
+	write(t, filepath.Join(configDir, "settings.json"), `{"model": "sonnet", "keepMe": 1}`)
+
+	if code := s.run("settings", "apply"); code != 0 {
+		t.Fatalf("settings apply exited %d: %s", code, s.output())
+	}
+	merged, err := os.ReadFile(filepath.Join(configDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("read the merged settings: %v", err)
+	}
+	if !strings.Contains(string(merged), `"opus"`) {
+		t.Errorf("the fragment was not merged into the configured directory: %s", merged)
+	}
+	if !strings.Contains(string(merged), "keepMe") {
+		t.Errorf("an unrelated key did not survive the merge: %s", merged)
+	}
+	if _, err := os.Stat(filepath.Join(s.home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Error("settings apply wrote into ~/.claude as well")
+	}
+}
+
+// doctor surveys the skills directory for entries petkit does not manage, and
+// that directory moves with CLAUDE_CONFIG_DIR too. A doctor still looking at
+// ~/.claude finds an empty or absent directory and reports nothing at all —
+// which reads exactly like a clean machine.
+func TestDoctorSurveysTheClaudeConfigDir(t *testing.T) {
+	s := newSandbox(t)
+	configDir := filepath.Join(s.base, "elsewhere-config")
+	s.env[manifest.EnvConfigDir] = configDir
+
+	if code := s.run("sync"); code != 0 {
+		t.Fatalf("sync exited %d: %s", code, s.output())
+	}
+	write(t, filepath.Join(configDir, "skills", "stranger", "SKILL.md"), "somebody else's")
+
+	if code := s.run("doctor"); code != 0 {
+		t.Fatalf("doctor exited %d: %s", code, s.output())
+	}
+	if !strings.Contains(s.output(), "stranger") {
+		t.Errorf("doctor did not survey the configured directory at all: %s", s.output())
+	}
+	if !strings.Contains(s.output(), "stranger is not in the manifest") {
+		t.Errorf("doctor did not report the stranger it found: %s", s.output())
+	}
+	// The item petkit installed a moment ago is its own, not a stranger.
+	if strings.Contains(s.output(), "writing-todo is not in the manifest") {
+		t.Errorf("doctor called its own item unmanaged: %s", s.output())
 	}
 }

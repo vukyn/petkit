@@ -10,6 +10,7 @@ import (
 
 	"github.com/vukyn/petkit/internal/link"
 	"github.com/vukyn/petkit/internal/manifest"
+	"github.com/vukyn/petkit/internal/ospath"
 )
 
 // machine is a repository and a home directory made out of t.TempDir(). The
@@ -18,6 +19,10 @@ type machine struct {
 	t    *testing.T
 	root string
 	home string
+
+	// layout is that home directory described to the code under test: this
+	// platform's path rules, and no CLAUDE_CONFIG_DIR.
+	layout manifest.Layout
 }
 
 func newMachine(t *testing.T) *machine {
@@ -30,6 +35,7 @@ func newMachine(t *testing.T) *machine {
 	}
 	mustMkdirAll(t, m.root)
 	mustMkdirAll(t, m.home)
+	m.layout = m.layoutFor(ospath.Current())
 	return m
 }
 
@@ -49,6 +55,13 @@ func (m *machine) manifestWith(items ...manifest.Item) *manifest.Manifest {
 		m.t.Fatalf("fixture manifest is invalid: %v", err)
 	}
 	return loaded
+}
+
+// layoutFor is the same home directory described as another platform's. It is
+// how a macOS test watches the Windows answer: the platform is a parameter, so
+// no build tag and no second machine are needed.
+func (m *machine) layoutFor(goos string) manifest.Layout {
+	return manifest.NewLayout(m.home, goos, nil)
 }
 
 func skillItem(name string) manifest.Item {
@@ -125,9 +138,9 @@ func snapshot(t *testing.T, root string) []string {
 	return lines
 }
 
-func syncOnce(t *testing.T, loaded *manifest.Manifest, home string, dryRun bool) link.Result {
+func syncOnce(t *testing.T, loaded *manifest.Manifest, layout manifest.Layout, dryRun bool) link.Result {
 	t.Helper()
-	result, err := link.Apply(link.Plan(link.Inspect(loaded, home)), dryRun)
+	result, err := link.Apply(link.Plan(link.Inspect(loaded, layout)), dryRun)
 	if err != nil {
 		t.Fatalf("sync returned an error it should not have: %v", err)
 	}
@@ -145,12 +158,12 @@ func TestSyncRefusesAConflictAndLeavesTheDirectoryWithItsContents(t *testing.T) 
 	mustWrite(t, filepath.Join(target, "SKILL.md"), "somebody else's work")
 	mustWrite(t, filepath.Join(target, "notes", "deep.md"), "nested and precious")
 
-	states := link.Inspect(loaded, m.home)
+	states := link.Inspect(loaded, m.layout)
 	if states[0].Status != link.Conflict {
 		t.Fatalf("status = %q, want %q", states[0].Status, link.Conflict)
 	}
 
-	result := syncOnce(t, loaded, m.home, false)
+	result := syncOnce(t, loaded, m.layout, false)
 	if len(result.Refused) != 1 {
 		t.Fatalf("refused %d items, want 1", len(result.Refused))
 	}
@@ -180,7 +193,7 @@ func TestSyncLinksTheSameItemWhenNothingIsInTheWay(t *testing.T) {
 	m.skill("writing-todo", "from the repository")
 	loaded := m.manifestWith(skillItem("writing-todo"))
 
-	result := syncOnce(t, loaded, m.home, false)
+	result := syncOnce(t, loaded, m.layout, false)
 	if result.Changed != 1 || len(result.Refused) != 0 {
 		t.Fatalf("changed=%d refused=%d, want 1 and 0", result.Changed, len(result.Refused))
 	}
@@ -195,21 +208,21 @@ func TestSyncIsIdempotent(t *testing.T) {
 	m.skill("todo-checklist", "two")
 	loaded := m.manifestWith(skillItem("writing-todo"), skillItem("todo-checklist"))
 
-	first := syncOnce(t, loaded, m.home, false)
+	first := syncOnce(t, loaded, m.layout, false)
 	if first.Changed != 2 {
 		t.Fatalf("first sync changed %d items, want 2", first.Changed)
 	}
 
 	afterFirst := snapshot(t, m.home)
 
-	second := syncOnce(t, loaded, m.home, false)
+	second := syncOnce(t, loaded, m.layout, false)
 	if second.Changed != 0 {
 		t.Errorf("second sync changed %d items, want 0", second.Changed)
 	}
 	if len(second.Refused) != 0 {
 		t.Errorf("second sync refused %d items, want 0", len(second.Refused))
 	}
-	for _, itemState := range link.Inspect(loaded, m.home) {
+	for _, itemState := range link.Inspect(loaded, m.layout) {
 		if itemState.Status != link.Linked {
 			t.Errorf("item %q is %q after two syncs, want %q", itemState.Item.ID, itemState.Status, link.Linked)
 		}
@@ -229,7 +242,7 @@ func TestSyncRepointsASymlinkThatPointsAtTheWrongPlace(t *testing.T) {
 	target := m.targetOf("writing-todo")
 	mustSymlink(t, elsewhere, target)
 
-	states := link.Inspect(loaded, m.home)
+	states := link.Inspect(loaded, m.layout)
 	if states[0].Status != link.Stale {
 		t.Fatalf("status = %q, want %q", states[0].Status, link.Stale)
 	}
@@ -237,7 +250,7 @@ func TestSyncRepointsASymlinkThatPointsAtTheWrongPlace(t *testing.T) {
 		t.Errorf("stale link reports %q, want %q", states[0].Actual, elsewhere)
 	}
 
-	result := syncOnce(t, loaded, m.home, false)
+	result := syncOnce(t, loaded, m.layout, false)
 	if result.Changed != 1 {
 		t.Fatalf("changed %d items, want 1", result.Changed)
 	}
@@ -269,7 +282,7 @@ func TestDryRunChangesNothing(t *testing.T) {
 	before := snapshot(t, m.home)
 	beforeRepo := snapshot(t, m.root)
 
-	result := syncOnce(t, loaded, m.home, true)
+	result := syncOnce(t, loaded, m.layout, true)
 	if result.Changed != 2 {
 		t.Errorf("dry run reports %d change(s), want the 2 it would make", result.Changed)
 	}
@@ -289,7 +302,7 @@ func TestSyncWithoutDryRunDoesChangeTheFilesystem(t *testing.T) {
 	loaded := m.manifestWith(skillItem("writing-todo"))
 
 	before := snapshot(t, m.home)
-	syncOnce(t, loaded, m.home, false)
+	syncOnce(t, loaded, m.layout, false)
 	after := snapshot(t, m.home)
 
 	if len(before) == len(after) {
@@ -310,7 +323,7 @@ func TestSyncCreatesParentDirectories(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(m.home, ".claude")); !os.IsNotExist(err) {
 		t.Fatalf("the fixture already has ~/.claude; the test would prove nothing")
 	}
-	syncOnce(t, loaded, m.home, false)
+	syncOnce(t, loaded, m.layout, false)
 	assertSymlinkResolvesTo(t,
 		filepath.Join(m.home, ".claude", "deeply", "nested", "skills", "writing-todo"),
 		filepath.Join(m.root, "skills", "writing-todo"))
@@ -323,14 +336,14 @@ func TestARegularFileAtATargetIsAConflict(t *testing.T) {
 	loaded := m.manifestWith(skillItem("writing-todo"))
 	mustWrite(t, m.targetOf("writing-todo"), "a file, not a directory")
 
-	states := link.Inspect(loaded, m.home)
+	states := link.Inspect(loaded, m.layout)
 	if states[0].Status != link.Conflict {
 		t.Fatalf("status = %q, want %q", states[0].Status, link.Conflict)
 	}
 	if !strings.Contains(states[0].Detail, "regular file") {
 		t.Errorf("detail = %q, want it to say what is in the way", states[0].Detail)
 	}
-	syncOnce(t, loaded, m.home, false)
+	syncOnce(t, loaded, m.layout, false)
 	assertFile(t, m.targetOf("writing-todo"), "a file, not a directory")
 }
 

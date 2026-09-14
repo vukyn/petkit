@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/vukyn/petkit/internal/manifest"
+	"github.com/vukyn/petkit/internal/ospath"
 )
 
 // Level separates "you have to fix this" from "you should know this". Most of
@@ -27,18 +28,15 @@ type Finding struct {
 	Message string
 }
 
-// SkillsDirName is the directory doctor surveys for entries petkit does not manage.
-const SkillsDirName = ".claude/skills"
-
 // Doctor runs the checks that are not about one item's link status: a source
 // that is not there, a target outside the home directory, and whatever else is
-// living under ~/.claude/skills.
-func Doctor(m *manifest.Manifest, home string) []Finding {
+// living in the skills directory.
+func Doctor(m *manifest.Manifest, layout manifest.Layout) []Finding {
 	var findings []Finding
 
-	managed := make(map[string]string, len(m.Items))
+	managed := newManagedTargets(len(m.Items), layout.GOOS)
 	for _, item := range m.Items {
-		source := item.SourcePath(m.Root)
+		source := item.SourcePath(m.Root, layout.GOOS)
 		if _, err := os.Stat(source); err != nil {
 			findings = append(findings, Finding{
 				Level: Problem,
@@ -52,14 +50,45 @@ func Doctor(m *manifest.Manifest, home string) []Finding {
 		// manifest.Validate refuses `~/..` outright, so a manifest that reaches
 		// this function cannot carry an escaping target — a branch here could not
 		// fire, and a guard that cannot fire is not a guard.
-		managed[filepath.Clean(item.TargetPath(home))] = item.ID
+		managed.claim(item, layout)
 	}
 
-	findings = append(findings, surveySkills(filepath.Join(home, filepath.FromSlash(SkillsDirName)), managed, home)...)
+	findings = append(findings, surveySkills(layout.SkillsDir(), managed, layout)...)
 	return findings
 }
 
-func surveySkills(skillsDir string, managed map[string]string, home string) []Finding {
+// managedTargets is the set of paths the manifest claims. It answers "is this
+// petkit's?" for every entry the survey turns up.
+//
+// ⚠️ It is keyed through ospath.Key rather than through the path itself,
+// because on Windows the name read out of a directory and the target built from
+// the manifest can differ in case — or in which separator the caller used — and
+// still be one file. A miss here reports an item petkit manages as a stranger it
+// does not, which is the opposite of what the survey is for.
+type managedTargets struct {
+	owners map[string]string
+	goos   string
+}
+
+func newManagedTargets(size int, goos string) managedTargets {
+	return managedTargets{owners: make(map[string]string, size), goos: goos}
+}
+
+func (t managedTargets) claim(item manifest.Item, layout manifest.Layout) {
+	t.owners[t.key(item.TargetPath(layout))] = item.ID
+}
+
+// owner names the item that claims path, if one does.
+func (t managedTargets) owner(path string) (string, bool) {
+	id, found := t.owners[t.key(path)]
+	return id, found
+}
+
+func (t managedTargets) key(path string) string {
+	return ospath.Key(filepath.Clean(path), t.goos)
+}
+
+func surveySkills(skillsDir string, managed managedTargets, layout manifest.Layout) []Finding {
 	entries, err := os.ReadDir(skillsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -67,7 +96,7 @@ func surveySkills(skillsDir string, managed map[string]string, home string) []Fi
 		}
 		return []Finding{{
 			Level:   Info,
-			Message: fmt.Sprintf("cannot read %s: %v", manifest.CollapseHome(skillsDir, home), err),
+			Message: fmt.Sprintf("cannot read %s: %v", layout.Display(skillsDir), err),
 		}}
 	}
 
@@ -80,7 +109,7 @@ func surveySkills(skillsDir string, managed map[string]string, home string) []Fi
 	var findings []Finding
 	for _, name := range names {
 		path := filepath.Join(skillsDir, name)
-		shown := manifest.CollapseHome(path, home)
+		shown := layout.Display(path)
 		if broken, destination := brokenSymlink(path); broken {
 			findings = append(findings, Finding{
 				Level: Info,
@@ -89,7 +118,7 @@ func surveySkills(skillsDir string, managed map[string]string, home string) []Fi
 			})
 			continue
 		}
-		if _, isManaged := managed[filepath.Clean(path)]; !isManaged {
+		if _, isManaged := managed.owner(path); !isManaged {
 			findings = append(findings, Finding{
 				Level: Info,
 				Message: fmt.Sprintf(
