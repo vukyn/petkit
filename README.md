@@ -3,10 +3,17 @@
 One machine's Claude Code setup, kept in a repository and installed by **symlink**.
 
 ```sh
-go install github.com/vukyn/petkit/cmd/petkit@latest
 git clone git@github.com:vukyn/petkit.git ~/vukyn/repo/pet-platform/petkit
-cd ~/vukyn/repo/pet-platform/petkit && petkit init . && petkit sync
+cd ~/vukyn/repo/pet-platform/petkit
+go install ./cmd/petkit        # the clone is the source; see below
+petkit init . && petkit sync
 ```
+
+⚠️ **Install from the clone, not from the module proxy.** The repository is
+private, so `go install github.com/vukyn/petkit/cmd/petkit@latest` fails unless
+the machine has `GOPRIVATE=github.com/vukyn/*` and git credentials for it — and
+the clone has to exist anyway, because every symlink points into it. Make the
+repository public and the proxy form starts working; nothing else changes.
 
 `petkit sync` makes `~/.claude` match `petkit.yaml`. Nothing is copied: each
 target becomes a symlink into this repository, so **editing a skill here is
