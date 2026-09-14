@@ -1,0 +1,25 @@
+name: check
+
+# Runs on pull requests AND on pushes to main. A check that only runs on a PR
+# lets a merge land red — hexarena measured exactly that before it added this.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Runs `make check` rather than restating its steps: two spellings of one
+      # gate drift, and the weaker one is always the local one.
+      - run: make check

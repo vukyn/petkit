@@ -1,0 +1,37 @@
+`Cmd/Ctrl+Enter` ----> `Todo: Toggle Box`
+`Alt+Enter` ----> `Todo: Toggle Box`
+`Alt+D` ----> `Todo: Toggle Done`
+`Alt+C` ----> `Todo: Toggle Cancelled`
+`Alt+S` ----> `Todo: Toggle Start`
+`Cmd/Ctrl+Shift+A` ---->  `Todo: Archive`
+
+Smoke test — Login flow:
+  `Scope: post-deploy smoke on staging, web + mobile`
+  `Owner: QA-on-duty`
+
+  Pre-checks:
+    ☐ Staging build sha matches release tag
+    ☐ Test accounts unlocked (qa-user-1, qa-user-2)
+    ☐ Feature flag `new_login` ON for staging
+
+  Happy path:
+    ☐ Web: login with valid creds → /dashboard within 2s @critical
+    ☐ Web: session cookie HttpOnly + Secure
+    ☐ Mobile (iOS): login → home tab loaded
+    ☐ Mobile (Android): login → home tab loaded
+
+  Edge cases:
+    ☐ Wrong password → inline error, no redirect
+    ☐ Locked account → "contact support" banner
+    ☐ Network drop mid-login → retry button visible
+    ☐ Email with unicode (тест@example.com) accepted
+
+  Regressions:
+    ☐ Logout clears session + redirects to /login
+    ☐ "Remember me" persists across browser restart
+    ☐ Password reset email arrives < 1 min
+
+  Sign-off:
+    ☐ All items above checked
+    ☐ Issues filed for any ✘
+    ☐ Slack #releases notified

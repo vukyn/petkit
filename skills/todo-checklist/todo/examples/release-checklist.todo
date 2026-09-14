@@ -1,0 +1,39 @@
+`Cmd/Ctrl+Enter` ----> `Todo: Toggle Box`
+`Alt+Enter` ----> `Todo: Toggle Box`
+`Alt+D` ----> `Todo: Toggle Done`
+`Alt+C` ----> `Todo: Toggle Cancelled`
+`Alt+S` ----> `Todo: Toggle Start`
+`Cmd/Ctrl+Shift+A` ---->  `Todo: Archive`
+
+Release v2.3.0:
+  `Scope: backend api + web client; no mobile bundle`
+  `Owner: release-captain`
+
+  Pre-deploy:
+    ☐ All P1 tickets in milestone closed @critical
+    ☐ Migration dry-run on staging clone clean
+    ☐ Changelog drafted + reviewed
+    ☐ On-call paged for window
+
+  Deploy:
+    ☐ Tag v2.3.0 on main
+    ☐ CI green on tag
+    ☐ Backend: rolling deploy 25% → 100% @critical
+    ☐ Web: CDN invalidation triggered
+    ☐ Migrations applied (check migrations table tail)
+
+  Post-deploy verify:
+    ☐ /healthz 200 across all regions
+    ☐ Error rate < 0.5% for 15 min
+    ☐ p95 latency within +10% of pre-deploy baseline
+    ☐ Sentry: no new error fingerprints in 30 min
+
+  Rollback ready:
+    ☐ Previous tag (v2.2.4) image still in registry
+    ☐ Down-migration tested on staging
+    ☐ Rollback command pasted in #releases pinned msg
+
+  Sign-off:
+    ☐ Release captain: all green
+    ☐ On-call: handoff doc updated
+    ☐ Slack #releases announce

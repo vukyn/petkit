@@ -1,0 +1,48 @@
+# petkit — what a machine should have, and where each piece goes.
+#
+# `petkit sync` makes ~/.claude match this file by SYMLINK: the repository is the
+# only copy, and editing a skill here is the same as editing the installed one.
+#
+# ⚠️ Every path is relative to the repository root; every target may use ~ for the
+# home directory and nothing else. An absolute target is refused — it would make
+# this file machine-specific, which is the one thing it may not be.
+
+version: 1
+
+items:
+  - id: skill/writing-todo
+    kind: skill
+    source: skills/writing-todo
+    target: ~/.claude/skills/writing-todo
+    note: |
+      Authored 2026-09-13 out of hexarena's TODO.md. Not in any plugin cache —
+      this repository is its only home.
+
+  - id: skill/todo-checklist
+    kind: skill
+    source: skills/todo-checklist
+    target: ~/.claude/skills/todo-checklist
+    note: |
+      Personal. Writes .todo files in Todo+ format; gardener's
+      docs/todo/multi-garden-deferred.todo is one of its outputs.
+
+# ── What is deliberately NOT here ────────────────────────────────────────────
+#
+# Fourteen skills under ~/.claude/skills are stale copies of the `superpowers`
+# plugin, which is installed and versioned upstream: on 2026-09-13 the installed
+# 6.3.0 copy of writing-plans carried a whole section (Task Right-Sizing) the
+# local copy lacked, and brainstorming was 92K against the local 64K. Six of the
+# fourteen are already `off` in settings/fragment.json. Tracking them here would
+# fork a plugin that updates itself.
+#
+# Two more (computer-use, orchestration) are symlinks into ~/.agents/skills, and
+# `orchestration` is BROKEN — its target does not exist.
+#
+# All three files in ~/.claude/hooks are deployed by their own tools: rtk stamps
+# `rtk-hook-version: 3` into rtk-rewrite.sh, claude-island-state.py belongs to
+# ClaudeIsland.app, and context-mode-cache-heal.mjs says "auto-deployed" on line 2.
+# A second copy here would be overwritten by its real owner without warning.
+#
+# pet-platform's 8 agents, 5 commands and 2 scripts stay in pet-platform: they are
+# addressed relative to that repository ($CLAUDE_PROJECT_DIR, $(SCRIPTS)) and
+# travel with its clone.

@@ -1,0 +1,42 @@
+`Cmd/Ctrl+Enter` ----> `Todo: Toggle Box`
+`Alt+Enter` ----> `Todo: Toggle Box`
+`Alt+D` ----> `Todo: Toggle Done`
+`Alt+C` ----> `Todo: Toggle Cancelled`
+`Alt+S` ----> `Todo: Toggle Start`
+`Cmd/Ctrl+Shift+A` ---->  `Todo: Archive`
+
+QA — Soldier FSM (Hit + Death states):
+  `Scope: internal/player FSM additions; in-game manual verify`
+  `Owner: QA`
+
+  Setup:
+    ☐ Fresh DB: `rm -rf data/ && make run`
+    ☐ Debug overlay ON (F3), hitbox draw ON (F4)
+    ☐ Spawn 2 orcs nearby
+
+  Functional:
+    ☐ Soldier hit → Hit state, knockback vx/vy applied @critical
+    ☐ I-frame holds while airborne after Hit
+    ☐ I-frame ends on land → control returns
+    ☐ Lives decrement by 1 per Hit
+    ☐ Lives = 0 → Death state, terminal anim
+
+  Boundary:
+    ☐ Hit while attacking cancels attack box
+    ☐ Hit at frame edge of attack still registers
+    ☐ Death triggers GAME OVER overlay
+    ☐ R press on GAME OVER restarts cleanly
+
+  Negative:
+    ☐ Cannot move during Death
+    ☐ Cannot attack during Hit
+    ☐ Stamina drain pauses during Hit/Death
+
+  Cleanup:
+    ☐ Re-tune via `make tune ARGS="set soldier_max_lives 3"` and re-verify decrement
+    ☐ Reset to default lives
+
+  Sign-off:
+    ☐ All items above checked
+    ☐ Issues filed for any ✘
+    ☐ Recording attached to ticket

@@ -1,0 +1,21 @@
+`Cmd/Ctrl+Enter` ----> `Todo: Toggle Box`
+`Alt+Enter` ----> `Todo: Toggle Box`
+`Alt+D` ----> `Todo: Toggle Done`
+`Alt+C` ----> `Todo: Toggle Cancelled`
+`Alt+S` ----> `Todo: Toggle Start`
+`Cmd/Ctrl+Shift+A` ---->  `Todo: Archive`
+
+<Title>:
+  `Scope: <one-line scope>`
+  `Owner: <name or blank>`
+
+  Pre-checks:
+    ☐ <prerequisite>
+
+  <Group>:
+    ☐ <verifiable step>
+    ☐ <verifiable step> @critical
+
+  Sign-off:
+    ☐ All items above checked
+    ☐ Issues filed for any ✘
