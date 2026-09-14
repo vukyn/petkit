@@ -1,0 +1,1 @@
+- [petkit gosec baseline](petkit-gosec-baseline.md) — 17 gosec hits all design/FP; guards to re-verify; v0.1.0 README path is history-only Low
