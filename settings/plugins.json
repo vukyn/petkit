@@ -30,14 +30,14 @@
   },
   "plugins": [
     {
-      "id": "gopls-lsp@claude-plugins-official",
-      "scope": "user",
-      "version": "1.0.0"
-    },
-    {
       "id": "caveman@caveman",
       "scope": "user",
       "version": "15581d14007f"
+    },
+    {
+      "id": "clangd-lsp@claude-plugins-official",
+      "scope": "user",
+      "version": "1.0.0"
     },
     {
       "id": "context-mode@context-mode",
@@ -45,14 +45,9 @@
       "version": "1.0.169"
     },
     {
-      "id": "warp@claude-code-warp",
+      "id": "gopls-lsp@claude-plugins-official",
       "scope": "user",
-      "version": "2.0.0"
-    },
-    {
-      "id": "ui-ux-pro-max@ui-ux-pro-max-skill",
-      "scope": "user",
-      "version": "2.13.0"
+      "version": "1.0.0"
     },
     {
       "id": "mongodb@claude-plugins-official",
@@ -66,13 +61,18 @@
     },
     {
       "id": "superpowers@claude-plugins-official",
-      "scope": "project",
+      "scope": "user",
       "version": "6.3.0"
     },
     {
-      "id": "clangd-lsp@claude-plugins-official",
+      "id": "ui-ux-pro-max@ui-ux-pro-max-skill",
       "scope": "user",
-      "version": "1.0.0"
+      "version": "2.13.0"
+    },
+    {
+      "id": "warp@claude-code-warp",
+      "scope": "user",
+      "version": "2.0.0"
     }
   ]
 }
