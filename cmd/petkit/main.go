@@ -32,6 +32,12 @@ type environment struct {
 	env        func(string) string
 	stdout     io.Writer
 	stderr     io.Writer
+
+	// git runs git, and modulePath is the module this binary was built from.
+	// Both are parameters for the same reason the home directory is one: setup
+	// is measured without a network and without cloning anything.
+	git        state.Runner
+	modulePath string
 }
 
 // environmentKey is where the environment is parked on the root command. urfave
@@ -64,6 +70,8 @@ func main() {
 		env:        os.Getenv,
 		stdout:     os.Stdout,
 		stderr:     os.Stderr,
+		git:        state.GitRunner,
+		modulePath: version.ModulePath(),
 	}))
 }
 
@@ -118,6 +126,21 @@ func newRootCommand(environment environment) *cli.Command {
 
 		// The order is the order the help lists them in.
 		Commands: []*cli.Command{
+			{
+				Name:         "setup",
+				Usage:        "clone the repository this binary came from, and record where it went",
+				UsageText:    "petkit setup [path] [--sync]",
+				OnUsageError: usageError(environment),
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "sync",
+						Usage: "install the links too, instead of printing the command that would",
+					},
+				},
+				Action: func(_ context.Context, command *cli.Command) error {
+					return commandSetup(environment, command.Args().First(), command.Bool("sync"))
+				},
+			},
 			{
 				Name:         "version",
 				Usage:        "the build version and the manifest's item count",
@@ -359,7 +382,13 @@ func commandStatus(environment environment) error {
 	if err != nil {
 		return err
 	}
+	return statusOf(environment, loaded)
+}
 
+// statusOf is the whole of status once the manifest is in hand. setup reports
+// through it rather than printing its own lines, so what setup says about a
+// fresh clone is what status says about it a second later.
+func statusOf(environment environment, loaded *manifest.Manifest) error {
 	writer := tabwriter.NewWriter(environment.stdout, 0, 0, 2, ' ', 0)
 	for _, itemState := range link.Inspect(loaded, environment.home) {
 		target := manifest.CollapseHome(itemState.Target, environment.home)
@@ -386,7 +415,13 @@ func commandSync(environment environment, dryRun bool) error {
 	if err != nil {
 		return err
 	}
+	return syncOf(environment, loaded, dryRun)
+}
 
+// syncOf is the whole of sync once the manifest is in hand — including the exit
+// code a refusal is worth. `setup --sync` runs this, so it cannot install links
+// by a path of its own that forgets to refuse something.
+func syncOf(environment environment, loaded *manifest.Manifest, dryRun bool) error {
 	actions := link.Plan(link.Inspect(loaded, environment.home))
 
 	prefix := ""
@@ -596,6 +631,49 @@ func commandCheck(environment environment) error {
 	if result.UpToDate() && !result.Dirty {
 		fmt.Fprintln(environment.stdout, "\nthis checkout is the newest version there is")
 	}
+	return nil
+}
+
+// commandSetup turns a bare binary into a set-up machine: a clone, a recorded
+// path, and a report of what `sync` would do.
+//
+// ⚠️ Without --sync it creates no symlink at all. Installing into `~/.claude` is
+// `sync`'s decision to make and `sync`'s refusals to report, and a command whose
+// job is "get me started" is the worst place to make it by surprise.
+func commandSetup(environment environment, path string, withSync bool) error {
+	result, err := state.Setup(state.SetupRequest{
+		Path:       path,
+		Home:       environment.home,
+		ModulePath: environment.modulePath,
+		Run:        environment.git,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(environment.stdout, "cloned   %s into %s\n", result.CloneURL,
+		manifest.CollapseHome(result.Target, environment.home))
+	fmt.Fprintf(environment.stdout, "recorded %s in %s\n",
+		manifest.CollapseHome(result.Location.Root, environment.home),
+		manifest.CollapseHome(result.Location.From, environment.home))
+
+	loaded, err := manifest.Load(result.Location.Root)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(environment.stdout)
+	if withSync {
+		return syncOf(environment, loaded, false)
+	}
+	if err := statusOf(environment, loaded); err != nil {
+		return err
+	}
+	fmt.Fprint(environment.stdout, `
+setup made no links of its own. To install them:
+
+  petkit sync
+`)
 	return nil
 }
 

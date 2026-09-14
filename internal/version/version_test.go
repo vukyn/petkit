@@ -59,3 +59,13 @@ func TestATagWithBuildMetadataIsLeftWhole(t *testing.T) {
 		}
 	}
 }
+
+// The module path is what `petkit setup` clones, so it has to be the module
+// this binary was really built from and not a constant somebody typed. The test
+// binary is built from this module, so that is what it must say.
+func TestModulePathIsTheModuleThisWasBuiltFrom(t *testing.T) {
+	const want = "github.com/vukyn/petkit"
+	if got := version.ModulePath(); got != want {
+		t.Errorf("ModulePath() = %q, want %q", got, want)
+	}
+}

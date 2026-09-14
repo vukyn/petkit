@@ -6,39 +6,68 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vukyn/petkit/internal/state"
 )
 
 // sandbox is a repository and a home directory built out of t.TempDir(). The
 // home directory reaches the commands as a field, never through $HOME, so these
 // tests cannot touch the machine they run on.
 type sandbox struct {
+	t      *testing.T
+	base   string
 	root   string
 	home   string
 	stdout *bytes.Buffer
 	stderr *bytes.Buffer
+
+	// clones is what the fake git was asked to do, in order. Nothing in these
+	// tests reaches the network: `clone` writes the same repository the sandbox
+	// has, at whatever path it was given.
+	clones [][]string
 }
 
 func newSandbox(t *testing.T) *sandbox {
 	t.Helper()
 	base := t.TempDir()
 	s := &sandbox{
+		t:      t,
+		base:   base,
 		root:   filepath.Join(base, "petkit"),
 		home:   filepath.Join(base, "home"),
 		stdout: &bytes.Buffer{},
 		stderr: &bytes.Buffer{},
 	}
-	write(t, filepath.Join(s.root, "skills", "writing-todo", "SKILL.md"), "from the repository")
-	write(t, filepath.Join(s.root, "petkit.yaml"), `version: 1
+	writeRepository(t, s.root)
+	if err := os.MkdirAll(s.home, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	return s
+}
+
+// writeRepository is a petkit checkout with one item in it.
+func writeRepository(t *testing.T, root string) {
+	t.Helper()
+	write(t, filepath.Join(root, "skills", "writing-todo", "SKILL.md"), "from the repository")
+	write(t, filepath.Join(root, "petkit.yaml"), `version: 1
 items:
   - id: skill/writing-todo
     kind: skill
     source: skills/writing-todo
     target: ~/.claude/skills/writing-todo
 `)
-	if err := os.MkdirAll(s.home, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+}
+
+// fakeGit records what it was asked and answers `clone` by writing a checkout.
+func (s *sandbox) fakeGit(t *testing.T) state.Runner {
+	t.Helper()
+	return func(_ string, args ...string) (string, error) {
+		s.clones = append(s.clones, args)
+		if len(args) == 3 && args[0] == "clone" {
+			writeRepository(t, args[2])
+		}
+		return "", nil
 	}
-	return s
 }
 
 func (s *sandbox) run(args ...string) int {
@@ -50,6 +79,8 @@ func (s *sandbox) run(args ...string) int {
 		env:        func(string) string { return "" },
 		stdout:     s.stdout,
 		stderr:     s.stderr,
+		git:        s.fakeGit(s.t),
+		modulePath: "example.com/someone/petkit",
 	})
 }
 
@@ -342,7 +373,7 @@ func TestPluginsPlanPrintsAndChangesNothing(t *testing.T) {
 // graph leaves the help, and this list stops matching.
 func TestHelpListsEveryCommand(t *testing.T) {
 	commands := []string{
-		"status", "sync", "doctor", "settings", "plugins", "check", "version", "init",
+		"setup", "status", "sync", "doctor", "settings", "plugins", "check", "version", "init",
 	}
 
 	// All three spellings reach the same help, and all three are worth 0.
@@ -465,5 +496,140 @@ func TestTheUsageErrorsAreAllWorthTwo(t *testing.T) {
 		if code := s.run(invocation...); code != 0 {
 			t.Errorf("%v exited %d, want 0: %s", invocation, code, s.output())
 		}
+	}
+}
+
+// homeTree is every path under the home directory with what kind of thing it
+// is. Symlinks are reported as symlinks rather than followed, because whether
+// one appeared is the whole question setup has to answer.
+func homeTree(t *testing.T, home string) map[string]string {
+	t.Helper()
+	tree := map[string]string{}
+	err := filepath.WalkDir(home, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		relative, err := filepath.Rel(home, path)
+		if err != nil {
+			return err
+		}
+		switch {
+		case entry.Type()&os.ModeSymlink != 0:
+			tree[relative] = "symlink"
+		case entry.IsDir():
+			tree[relative] = "directory"
+		default:
+			tree[relative] = "file"
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", home, err)
+	}
+	return tree
+}
+
+// setup gets a machine a clone and a record, and stops there. ⚠️ The links are
+// sync's to make: the home directory is snapshotted either side of the command
+// and the only thing that may appear in it is the record itself.
+func TestSetupWithoutSyncMakesNoLinks(t *testing.T) {
+	s := newSandbox(t)
+	target := filepath.Join(s.base, "clone")
+	before := homeTree(t, s.home)
+
+	if code := s.run("setup", target); code != 0 {
+		t.Fatalf("setup exited %d: %s", code, s.output())
+	}
+
+	after := homeTree(t, s.home)
+	for path, kind := range after {
+		if kind == "symlink" {
+			t.Errorf("setup created a symlink at %s", path)
+		}
+		if _, existed := before[path]; existed {
+			continue
+		}
+		if !strings.HasPrefix(path, ".config") {
+			t.Errorf("setup created %s (%s), which is not the record", path, kind)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(s.home, ".claude")); !os.IsNotExist(err) {
+		t.Error("setup created something under ~/.claude")
+	}
+
+	// What it does instead: report what sync would do, and name the command.
+	printed := s.stdout.String()
+	for _, want := range []string{
+		"https://example.com/someone/petkit",
+		"missing",
+		"skill/writing-todo",
+		"petkit sync",
+	} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("setup did not print %q:\n%s", want, printed)
+		}
+	}
+}
+
+// --sync goes all the way, and carries sync's exit code with it: a conflict is
+// still refused, and the file in the way is still there afterwards.
+func TestSetupWithSyncInstallsTheLinksAndKeepsSyncsExitCode(t *testing.T) {
+	s := newSandbox(t)
+	target := filepath.Join(s.base, "clone")
+	installed := filepath.Join(s.home, ".claude", "skills", "writing-todo")
+
+	if code := s.run("setup", "--sync", target); code != 0 {
+		t.Fatalf("setup --sync exited %d: %s", code, s.output())
+	}
+	link, err := os.Readlink(installed)
+	if err != nil {
+		t.Fatalf("setup --sync left no symlink at %s: %v", installed, err)
+	}
+	if want := filepath.Join(target, "skills", "writing-todo"); link != want {
+		t.Errorf("the link points at %s, want %s", link, want)
+	}
+
+	// The refusal: a fresh machine with something real already sitting at the
+	// target gets the conflict and the non-zero exit, through setup exactly as
+	// through sync.
+	other := newSandbox(t)
+	obstacle := filepath.Join(other.home, ".claude", "skills", "writing-todo")
+	write(t, filepath.Join(obstacle, "SKILL.md"), "somebody else's")
+
+	if code := other.run("setup", "--sync", filepath.Join(other.base, "clone")); code == 0 {
+		t.Errorf("setup --sync exited 0 over a conflict: %s", other.output())
+	}
+	if !strings.Contains(other.stderr.String(), "skill/writing-todo") {
+		t.Errorf("the refusal does not name the item: %s", other.stderr.String())
+	}
+	if content, err := os.ReadFile(filepath.Join(obstacle, "SKILL.md")); err != nil || string(content) != "somebody else's" {
+		t.Errorf("the conflicting file did not survive: %q %v", content, err)
+	}
+}
+
+// A machine that already has a repository is told where it is rather than given
+// a second one, and the message carries the recorded path.
+func TestSetupRefusesAMachineThatIsAlreadySetUp(t *testing.T) {
+	s := newSandbox(t)
+	if code := s.run("init", s.root); code != 0 {
+		t.Fatalf("init exited %d: %s", code, s.output())
+	}
+
+	if code := s.run("setup"); code == 0 {
+		t.Fatalf("setup ran on a machine that already had a repository: %s", s.output())
+	}
+	if !strings.Contains(s.stderr.String(), s.root) {
+		t.Errorf("the refusal does not name the recorded repository: %s", s.stderr.String())
+	}
+	if len(s.clones) != 0 {
+		t.Errorf("git ran anyway: %v", s.clones)
+	}
+
+	// The positive case: naming somewhere else is an explicit second clone.
+	if code := s.run("setup", filepath.Join(s.base, "second")); code != 0 {
+		t.Errorf("setup refused an explicit second path: %s", s.output())
 	}
 }
