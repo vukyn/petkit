@@ -69,7 +69,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-002` | open | A binary can now clone itself a repository, but `check` still fails without one — what is left is whether it should answer from the tags API instead |
 | `CLI-010` | open | The repository is resolved by walking up from the working directory FIRST, so running petkit from inside a different clone silently repoints every link to that clone |
 | `CLI-009` | open | Nothing has ever run on Windows — the port is compile-checked and unit-checked from macOS, and the machine itself is unmeasured |
-| `DOC-001` | open | Fourteen stale skill copies still sit in `~/.claude/skills`, and it is unmeasured whether they shadow the plugin's own |
+| `DOC-001` | done | The fourteen stale copies were not shadowing anything — the plugin was installed project-scoped to another project and did not load here at all. Installed at user scope, the thirteen copies backed up and removed |
 | `LINK-003` | refused | Installing by copy instead of by symlink |
 | `CLI-008` | refused | Moving the config file to `os.UserConfigDir()` — it stays at `.config/petkit/config.json` on every OS |
 | `PLUG-003` | refused | Installing plugins ourselves instead of printing `claude plugin` commands |
@@ -329,28 +329,6 @@ defect fixed in `internal/link` is still `SETT`.
       two items will fight over one path, run after run. If it ever happens, the
       answer is a refusal in `validateTarget` that is case-insensitive on every
       platform — not one that consults `GOOS`.
-
-- [ ] `DOC-001` ⚠️ **Fourteen stale skill copies sit in the skills directory, and
-      it is unmeasured whether they shadow the plugin's own.** Raised 2026-09-14
-      out of the curation that produced this repository.
-
-      **What is known.** The skills directory holds fourteen entries that are older
-      copies of skills an installed plugin also provides. Measured: one plugin copy
-      carries a whole section its local twin lacks, and another is 92K against the
-      local 64K. Six of the fourteen are `off` in `settings/fragment.json`, which
-      leaves **eight** live.
-
-      ⚠️ **What is NOT known is which copy wins** when a personal skill directory
-      and a plugin skill share a name. If the local one shadows, those eight are
-      silently running an old version, and that is a defect with a fix (delete
-      them) rather than untidiness. If the plugin wins, they are dead weight and
-      the fix is the same but the urgency is not.
-
-      **What closing it needs.** One reading — invoke a shadowed skill and check
-      which text arrives; a section that exists in only one of the two copies is a
-      one-word probe — then delete the fourteen, or record why they stay. ⚠️ `petkit` must not do
-      the deleting: they are not its items, and a tool that removes things it does
-      not manage is exactly what `LINK-002` refuses.
 
 ## Decided against — do not re-raise
 

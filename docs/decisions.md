@@ -358,3 +358,49 @@ the way it is. The entries carry the same `AREA-NNN` codes.
       separate answer — it moved, because `CLAUDE_CONFIG_DIR` is another
       program's decision that petkit has to follow (`CLI-006`). The config file
       is petkit's own, and petkit keeps it in one place.
+
+- [x] `DOC-001` ⚠️ **The fourteen stale skill copies were not shadowing anything.
+      The plugin was not loaded at all.** Raised 2026-09-14 as "it is unmeasured
+      whether they shadow the plugin's own", closed the same day — and the premise
+      was wrong in a way worth keeping.
+
+      **What the question assumed.** That a personal skill directory and a plugin
+      skill of the same name compete, and one wins. The real answer is that there
+      was no competition: the plugin was installed with **`scope: project`, bound
+      to a different project**, so in this workspace it contributed nothing.
+      `enabledPlugins` listed only one plugin, and it was not this one.
+
+      ⚠️ **The measurement that settled it was not a config file.** Configuration
+      says what should happen; what settled it is that `using-git-worktrees` exists
+      **only** in the plugin and was **absent from the session's own skill list**.
+      A skill the plugin provides and the machine does not have is proof the plugin
+      is not loaded — the same shape of evidence as running a guard and watching it
+      fire, rather than reading the line that says it would.
+
+      **How stale the copies were.** Measured against the installed 6.3.0 cache:
+
+      | skill | plugin adds | local-only lines | files only in the plugin |
+      | --- | ---: | ---: | ---: |
+      | `subagent-driven-development` | +447 | −156 | 4 |
+      | `using-superpowers` | +132 | −148 | 3 |
+      | `writing-skills` | +64 | −152 | 6 |
+      | `systematic-debugging` | +7 | −20 | **10** |
+      | `verification-before-completion` | +0 | −19 | 0 |
+
+      ⚠️ **The local-only lines were not edits.** A scan of every such line across
+      all thirteen for personal markers — repository names, an employer's name, any
+      Vietnamese diacritic — found **nothing**, and a sampled diff showed upstream
+      prose that 6.3.0 had deleted. So they were an older release carried forward,
+      not customisation, and removing them cost nothing.
+
+      **What shipped.** `claude plugin install superpowers@claude-plugins-official
+      --scope user`; the thirteen copies moved to
+      `~/.claude/.superpowers-replaced-<timestamp>/` rather than deleted. Four
+      entries remain in the skills directory: two petkit symlinks and two symlinks
+      into another tool's directory. `settings/plugins.json` records the new scope.
+
+      ⚠️ **6.3.0 was already the newest** — the local marketplace pin, the upstream
+      marketplace pin and `obra/superpowers`'s own manifest all agree on
+      `b36e0829` / `6.3.0`. The update that was needed was not a version bump; it
+      was a **scope**. "Is it the latest" and "is it loaded" are different
+      questions, and only the second one was wrong.
