@@ -67,6 +67,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-006` | done | `CLAUDE_CONFIG_DIR` is honoured — petkit hard-coded `~/.claude`, so a machine that sets it was having everything installed where nothing reads it. Wrong on every OS, not only Windows |
 | `CLI-007` | done | A missing git said `executable file not found in %PATH%`; it now names git and says what needs it |
 | `CLI-002` | open | A binary can now clone itself a repository, but `check` still fails without one — what is left is whether it should answer from the tags API instead |
+| `CLI-010` | open | The repository is resolved by walking up from the working directory FIRST, so running petkit from inside a different clone silently repoints every link to that clone |
 | `CLI-009` | open | Nothing has ever run on Windows — the port is compile-checked and unit-checked from macOS, and the machine itself is unmeasured |
 | `DOC-001` | open | Fourteen stale skill copies still sit in `~/.claude/skills`, and it is unmeasured whether they shadow the plugin's own |
 | `LINK-003` | refused | Installing by copy instead of by symlink |
@@ -232,6 +233,42 @@ defect fixed in `internal/link` is still `SETT`.
       **What closing it needs.** Either `check` falls back to the GitHub tags API
       when there is no repository, or its error names both ways out in one
       sentence — which is cheap and might be the whole answer.
+
+- [ ] `CLI-010` ⚠️ **Running petkit from inside a different clone silently
+      repoints every link to that clone.** Found 2026-09-14 while measuring
+      `CLI-009`'s own invariant on a fresh install, and it is not the defect that
+      invariant is about.
+
+      **What happens.** The repository is resolved by walking up from the working
+      directory first, then `$PETKIT_HOME`, then the path `init` recorded. So a
+      machine that has been set up at one path, whose shell happens to sit inside
+      *another* clone, gets the other one — with no warning, because from petkit's
+      side nothing is wrong:
+
+      ```
+      $ petkit setup --sync /tmp/e2e4/clone      # records /tmp/e2e4/clone
+      create  skill/writing-todo  ~/.claude/skills/writing-todo -> /tmp/e2e4/clone/…
+
+      $ cd /somewhere/else/petkit && petkit sync  # a second clone, not the recorded one
+      repoint skill/writing-todo  ~/.claude/skills/writing-todo -> /somewhere/else/petkit/…
+                                  (was /tmp/e2e4/clone/…)
+      ```
+
+      From a neutral working directory the same command is correct and idempotent
+      — measured immediately afterwards: `nothing to do; every item is already
+      linked`, exit 0. **So the comparison is right and the resolution order is the
+      subject.**
+
+      ⚠️ **This is the documented order doing exactly what it says**, which is why
+      it is filed rather than patched in a hurry. Walking up is what makes petkit
+      work inside a checkout with no `init` at all, and that is worth keeping.
+
+      **What closing it needs, and the trap in each option.** Either `sync` says
+      which repository it resolved and how (one line, always — cheap, and it makes
+      every future report self-explaining), or a walked-up repository that is *not*
+      the recorded one asks before repointing. ⚠️ Do not "fix" it by making the
+      recorded path win: that breaks a fresh checkout being usable before `init`,
+      which is the case the walk-up exists for.
 
 - [ ] `CLI-009` ⚠️ **Nothing has ever run on Windows.** Raised 2026-09-14 with
       the port that made the code correct there.
