@@ -57,7 +57,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `PLUG-001` | done | The plugin list and `plugins plan` |
 | `PLUG-002` | open | Two machines can end up on different plugin versions and the manifest cannot say otherwise |
 | `CLI-001` | done | The command surface and the version rule |
-| `CLI-002` | open | `check` needs a clone; a machine that only ran `go install` has no repository to check against |
+| `CLI-002` | open | `go install` works (with `GOPRIVATE`), but a binary with no clone can only answer `version` — measured; what is left is whether `check` should reach the tags API |
 | `DOC-001` | open | Fourteen stale skill copies still sit in `~/.claude/skills`, and it is unmeasured whether they shadow the plugin's own |
 | `LINK-003` | refused | Installing by copy instead of by symlink |
 | `PLUG-003` | refused | Installing plugins ourselves instead of printing `claude plugin` commands |
@@ -142,15 +142,28 @@ defect fixed in `internal/link` is still `SETT`.
       accepts a version at all — if it does not, the honest close is to relabel the
       field as *last seen* and stop implying it is a target.
 
-- [ ] `CLI-002` **`check` needs a clone.** Raised 2026-09-14 with the first
-      version.
+- [ ] `CLI-002` **`check` needs a clone, and so does everything except
+      `version`.** Raised 2026-09-14 with the first version, **measured the same
+      day**.
 
-      The advertised install is `go install …@latest` plus a `git clone`, because
-      the symlink targets have to point at *something* — so a clone always exists
-      in the intended flow. But `petkit check` shells out to `git` in that clone,
-      and a machine that installed the binary and never cloned gets an error where
-      it expected a version answer. ⚠️ `petkit version` works everywhere;
-      `check` is the one command with a hidden requirement.
+      `go install github.com/vukyn/petkit/cmd/petkit@latest` works — with
+      `GOPRIVATE='github.com/vukyn/*'` set, both `@latest` and `@v0.1.0` install
+      and the binary reports `petkit v0.1.0`. But the binary alone installs
+      nothing: every symlink points into a clone, so a machine with the binary and
+      no clone gets this from `check`, `sync`, `status` and `doctor` alike:
+
+      ```
+      petkit: cannot find the petkit repository: no petkit.yaml above /tmp,
+      PETKIT_HOME is not set, and nothing is recorded in
+      ~/.config/petkit/config.json — run `petkit init /path/to/petkit` once, or
+      run petkit from inside the repository
+      ```
+
+      ⚠️ **That message is already the cheap half of the fix** — it names the
+      cause and the way out in one sentence. What is still open is narrower: should
+      `check` answer "is there a newer tag" **without** a clone, from the GitHub
+      tags API? It is the one question a machine can sensibly ask before it has
+      cloned anything.
 
       **What closing it needs.** Either `check` falls back to the GitHub tags API
       when there is no repository, or its error says exactly that in one sentence

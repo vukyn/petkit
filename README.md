@@ -9,11 +9,37 @@ go install ./cmd/petkit        # the clone is the source; see below
 petkit init . && petkit sync
 ```
 
-⚠️ **Install from the clone, not from the module proxy.** The repository is
-private, so `go install github.com/vukyn/petkit/cmd/petkit@latest` fails unless
-the machine has `GOPRIVATE=github.com/vukyn/*` and git credentials for it — and
-the clone has to exist anyway, because every symlink points into it. Make the
-repository public and the proxy form starts working; nothing else changes.
+`go install` works too, and is the right way to get the binary onto a machine
+that already has the clone somewhere else:
+
+```sh
+export GOPRIVATE='github.com/vukyn/*'                      # once, in your shell profile
+go install github.com/vukyn/petkit/cmd/petkit@latest       # or @v0.1.0
+```
+
+⚠️ **`GOPRIVATE` is not optional while the repository is private.** Without it the
+module proxy is asked for a repository it cannot read, and the failure names the
+wrong cause:
+
+```
+not found: github.com/vukyn/petkit@v0.1.0: invalid version: git ls-remote …
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
+```
+
+With `GOPRIVATE` set, Go goes to GitHub directly and uses the git credentials the
+machine already has (`gh auth login` is enough). Measured 2026-09-14: both
+`@latest` and `@v0.1.0` install, and the binary reports `petkit v0.1.0` — the
+version comes from the tag either way.
+
+⚠️ **The binary alone is not an install.** Every symlink points into the clone, so
+the clone has to exist and `petkit init` has to know where it is. A binary with no
+repository answers `version` and nothing else:
+
+```
+petkit: cannot find the petkit repository: no petkit.yaml above /tmp,
+PETKIT_HOME is not set, and nothing is recorded in ~/.config/petkit/config.json —
+run `petkit init /path/to/petkit` once, or run petkit from inside the repository
+```
 
 `petkit sync` makes `~/.claude` match `petkit.yaml`. Nothing is copied: each
 target becomes a symlink into this repository, so **editing a skill here is
