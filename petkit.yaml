@@ -46,6 +46,8 @@ items:
 #      to their repository ($CLAUDE_PROJECT_DIR, a Makefile variable) arrive on
 #      every machine with `git clone` and need nothing from here.
 #
-# ⚠️ Two of those fourteen were symlinks into another tool's directory, and one
-# of the two was BROKEN — pointing at a path that did not exist. `petkit doctor`
-# reports that shape; it does not repair it, because the link is not its item.
+# ⚠️ Two more entries in that directory were symlinks into another tool's own
+# skills directory. Both resolve; both are that tool's to maintain. `petkit doctor`
+# lists them as unmanaged and leaves them alone, which is what it does with
+# everything it does not own — a broken link would be named as broken, and neither
+# of these is.
