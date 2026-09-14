@@ -17,6 +17,7 @@ import (
 
 	"github.com/vukyn/petkit/internal/link"
 	"github.com/vukyn/petkit/internal/manifest"
+	"github.com/vukyn/petkit/internal/ospath"
 	"github.com/vukyn/petkit/internal/plugins"
 	"github.com/vukyn/petkit/internal/settings"
 	"github.com/vukyn/petkit/internal/state"
@@ -27,7 +28,10 @@ import (
 // home directory in particular is a parameter, never a read of $HOME inside the
 // logic, which is what lets the tests run against a temporary machine.
 type environment struct {
-	home       string
+	// layout is the machine: what `~` means, what `~/.claude` means once
+	// CLAUDE_CONFIG_DIR has had its say, and which platform's path rules
+	// apply. Home is read from it rather than kept twice.
+	layout     manifest.Layout
 	workingDir string
 	env        func(string) string
 	stdout     io.Writer
@@ -65,7 +69,7 @@ func main() {
 		os.Exit(1)
 	}
 	os.Exit(run(os.Args[1:], environment{
-		home:       home,
+		layout:     manifest.NewLayout(home, ospath.Current(), os.Getenv),
 		workingDir: workingDir,
 		env:        os.Getenv,
 		stdout:     os.Stdout,
@@ -351,7 +355,7 @@ func invocation(command *cli.Command, fallback string) string {
 }
 
 func locate(environment environment) (state.Location, error) {
-	return state.Find(environment.workingDir, environment.home, environment.env)
+	return state.Find(environment.workingDir, environment.layout.Home, environment.env)
 }
 
 func loadManifest(environment environment) (*manifest.Manifest, error) {
@@ -390,14 +394,14 @@ func commandStatus(environment environment) error {
 // fresh clone is what status says about it a second later.
 func statusOf(environment environment, loaded *manifest.Manifest) error {
 	writer := tabwriter.NewWriter(environment.stdout, 0, 0, 2, ' ', 0)
-	for _, itemState := range link.Inspect(loaded, environment.home) {
-		target := manifest.CollapseHome(itemState.Target, environment.home)
+	for _, itemState := range link.Inspect(loaded, environment.layout) {
+		target := environment.layout.Display(itemState.Target)
 		detail := ""
 		switch itemState.Status {
 		case link.Stale:
 			detail = fmt.Sprintf("-> %s (want %s)",
-				manifest.CollapseHome(itemState.Actual, environment.home),
-				manifest.CollapseHome(itemState.Source, environment.home))
+				environment.layout.Display(itemState.Actual),
+				environment.layout.Display(itemState.Source))
 		case link.Conflict:
 			detail = "(" + itemState.Detail + ")"
 		}
@@ -422,7 +426,7 @@ func commandSync(environment environment, dryRun bool) error {
 // code a refusal is worth. `setup --sync` runs this, so it cannot install links
 // by a path of its own that forgets to refuse something.
 func syncOf(environment environment, loaded *manifest.Manifest, dryRun bool) error {
-	actions := link.Plan(link.Inspect(loaded, environment.home))
+	actions := link.Plan(link.Inspect(loaded, environment.layout))
 
 	prefix := ""
 	if dryRun {
@@ -430,14 +434,14 @@ func syncOf(environment environment, loaded *manifest.Manifest, dryRun bool) err
 	}
 	writer := tabwriter.NewWriter(environment.stdout, 0, 0, 2, ' ', 0)
 	for _, action := range actions {
-		target := manifest.CollapseHome(action.State.Target, environment.home)
-		source := manifest.CollapseHome(action.State.Source, environment.home)
+		target := environment.layout.Display(action.State.Target)
+		source := environment.layout.Display(action.State.Source)
 		switch action.Kind {
 		case link.Create:
 			fmt.Fprintf(writer, "%screate\t%s\t%s -> %s\n", prefix, action.State.Item.ID, target, source)
 		case link.Repoint:
 			fmt.Fprintf(writer, "%srepoint\t%s\t%s -> %s (was %s)\n", prefix, action.State.Item.ID, target, source,
-				manifest.CollapseHome(action.State.Actual, environment.home))
+				environment.layout.Display(action.State.Actual))
 		case link.None:
 			fmt.Fprintf(writer, "ok\t%s\t%s\n", action.State.Item.ID, target)
 		case link.Refuse:
@@ -478,7 +482,7 @@ func commandDoctor(environment environment) error {
 		return err
 	}
 
-	findings := link.Doctor(loaded, environment.home)
+	findings := link.Doctor(loaded, environment.layout)
 	problems := 0
 	for _, finding := range findings {
 		if finding.Level == link.Problem {
@@ -511,7 +515,7 @@ func withFragment(environment environment, action func(environment environment, 
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", fragmentPath, err)
 	}
-	livePath := filepath.Join(environment.home, ".claude", "settings.json")
+	livePath := filepath.Join(environment.layout.Config, "settings.json")
 	return action(environment, livePath, fragment)
 }
 
@@ -527,7 +531,7 @@ func settingsDiff(environment environment, livePath string, fragment []byte) err
 	if err != nil {
 		return err
 	}
-	shown := manifest.CollapseHome(livePath, environment.home)
+	shown := environment.layout.Display(livePath)
 	if len(changes) == 0 {
 		fmt.Fprintf(environment.stdout, "%s already says what the fragment says\n", shown)
 		return nil
@@ -550,13 +554,13 @@ func settingsApply(environment environment, livePath string, fragment []byte) er
 	if err != nil {
 		return err
 	}
-	shown := manifest.CollapseHome(livePath, environment.home)
+	shown := environment.layout.Display(livePath)
 	if !result.Changed {
 		fmt.Fprintf(environment.stdout, "%s already says what the fragment says; nothing was written\n", shown)
 		return nil
 	}
 	if result.BackupPath != "" {
-		fmt.Fprintf(environment.stdout, "backup %s\n", manifest.CollapseHome(result.BackupPath, environment.home))
+		fmt.Fprintf(environment.stdout, "backup %s\n", environment.layout.Display(result.BackupPath))
 	}
 	fmt.Fprintf(environment.stdout, "wrote  %s\n", shown)
 	return nil
@@ -571,7 +575,7 @@ func commandPluginsPlan(environment environment) error {
 	if err != nil {
 		return err
 	}
-	live, err := plugins.LoadLive(filepath.Join(environment.home, ".claude", "plugins"))
+	live, err := plugins.LoadLive(filepath.Join(environment.layout.Config, "plugins"))
 	if err != nil {
 		return err
 	}
@@ -643,7 +647,7 @@ func commandCheck(environment environment) error {
 func commandSetup(environment environment, path string, withSync bool) error {
 	result, err := state.Setup(state.SetupRequest{
 		Path:       path,
-		Home:       environment.home,
+		Home:       environment.layout.Home,
 		ModulePath: environment.modulePath,
 		Run:        environment.git,
 	})
@@ -652,10 +656,10 @@ func commandSetup(environment environment, path string, withSync bool) error {
 	}
 
 	fmt.Fprintf(environment.stdout, "cloned   %s into %s\n", result.CloneURL,
-		manifest.CollapseHome(result.Target, environment.home))
+		environment.layout.Display(result.Target))
 	fmt.Fprintf(environment.stdout, "recorded %s in %s\n",
-		manifest.CollapseHome(result.Location.Root, environment.home),
-		manifest.CollapseHome(result.Location.From, environment.home))
+		environment.layout.Display(result.Location.Root),
+		environment.layout.Display(result.Location.From))
 
 	loaded, err := manifest.Load(result.Location.Root)
 	if err != nil {
@@ -682,7 +686,7 @@ func commandInit(environment environment, path string) error {
 	if path != "" {
 		candidate = path
 	}
-	location, err := state.Init(candidate, environment.home)
+	location, err := state.Init(candidate, environment.layout.Home)
 	if err != nil {
 		return err
 	}

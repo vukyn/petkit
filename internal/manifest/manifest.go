@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/vukyn/petkit/internal/ospath"
 )
 
 // FileName is the manifest's name; finding it is what marks a repository root.
@@ -127,6 +129,8 @@ func validateTarget(label, target string, owner map[string]string) []string {
 		return []string{fmt.Sprintf(
 			"item %q: target %q must start with \"~/\"; an absolute or relative target "+
 				"would make petkit.yaml machine-specific, which it may not be", label, target)}
+	case strings.Contains(target, `\`):
+		return []string{backslashProblem(label, "target", target)}
 	}
 	// ⚠️ `~/` is a prefix, not a fence: `~/../elsewhere` starts with it and lands
 	// outside the home directory once expanded. Refuse it here rather than leaving
@@ -151,6 +155,8 @@ func validateSource(label, source, root string) []string {
 	case filepath.IsAbs(source):
 		return []string{fmt.Sprintf(
 			"item %q: source %q is absolute; sources are relative to the repository root", label, source)}
+	case strings.Contains(source, `\`):
+		return []string{backslashProblem(label, "source", source)}
 	}
 	clean := filepath.Clean(source)
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
@@ -160,15 +166,32 @@ func validateSource(label, source, root string) []string {
 	return nil
 }
 
-// SourcePath is the item's absolute path inside the repository.
-func (i Item) SourcePath(root string) string {
-	return filepath.Join(root, filepath.Clean(i.Source))
+// backslashProblem refuses a path written with Windows separators.
+//
+// ⚠️ This is refused on every platform, not only on Unix, and the reason is that
+// the manifest travels. `~/..\elsewhere` is a path that climbs out of the home
+// directory on Windows and an ordinary file called `..\elsewhere` on macOS, so
+// the escape check would pass on the machine that wrote the manifest and the
+// escape would happen on the machine that read it. One spelling, checked once,
+// meaning the same thing everywhere.
+func backslashProblem(label, field, value string) string {
+	return fmt.Sprintf(
+		"item %q: %s %q contains a backslash; write every path in %s with \"/\" — a backslash "+
+			"separates components on Windows and is an ordinary character in a file name everywhere "+
+			"else, so the same manifest would mean two different things",
+		label, field, value, FileName)
 }
 
-// TargetPath is the item's absolute path on the machine, with ~ expanded
-// against the given home directory.
-func (i Item) TargetPath(home string) string {
-	return ExpandTilde(i.Target, home)
+// SourcePath is the item's absolute path inside the repository. goos is the
+// platform the path is being built for; the manifest writes a source with "/"
+// on every machine, so that is where the separator is decided.
+func (i Item) SourcePath(root, goos string) string {
+	return filepath.Join(root, ospath.FromSlash(i.Source, goos))
+}
+
+// TargetPath is the item's absolute path on the machine.
+func (i Item) TargetPath(layout Layout) string {
+	return layout.Resolve(i.Target)
 }
 
 // ExpandTilde expands a leading ~ against home. It is the only templating
@@ -184,17 +207,102 @@ func ExpandTilde(path, home string) string {
 	}
 }
 
-// CollapseHome is ExpandTilde's inverse, used only for printing: a path shown
-// as ~/.claude/skills/x is the path the manifest names.
-func CollapseHome(path, home string) string {
-	home = filepath.Clean(home)
-	clean := filepath.Clean(path)
-	switch {
-	case clean == home:
-		return "~"
-	case strings.HasPrefix(clean, home+string(filepath.Separator)):
-		return "~" + clean[len(home):]
-	default:
-		return clean
+// EnvConfigDir is the variable Claude Code itself honours for the directory it
+// keeps its configuration in.
+//
+// ⚠️ petkit used to hard-code ~/.claude. On a machine that sets this, that is a
+// directory nothing reads: the links would be installed correctly and Claude
+// Code would never look at them. It is not a Windows defect — it is wrong the
+// same way on every platform.
+const EnvConfigDir = "CLAUDE_CONFIG_DIR"
+
+// ConfigDirName is where Claude Code keeps its configuration when
+// CLAUDE_CONFIG_DIR says nothing.
+const ConfigDirName = ".claude"
+
+// configDirTarget is the manifest spelling of that directory. A target under it
+// follows the variable; every other target is relative to the home directory.
+const configDirTarget = "~/" + ConfigDirName
+
+// Layout is the machine a manifest is being applied to: what `~` means, what
+// `~/.claude` means, and which operating system's path rules to use.
+//
+// ⚠️ GOOS is a field rather than a read of runtime.GOOS for the reason the whole
+// of internal/ospath exists: it lets a test on macOS resolve and print paths the
+// way Windows would, in the same process, with no build tag.
+type Layout struct {
+	Home   string
+	Config string
+	GOOS   string
+}
+
+// NewLayout describes a machine: its home directory, the platform it runs, and
+// the environment it was started with. CLAUDE_CONFIG_DIR wins when it is set and
+// not empty, and a `~` inside it is expanded like any other `~`.
+func NewLayout(home, goos string, env func(string) string) Layout {
+	layout := Layout{
+		Home:   home,
+		Config: filepath.Join(home, ConfigDirName),
+		GOOS:   goos,
 	}
+	if env == nil {
+		return layout
+	}
+	if raw := env(EnvConfigDir); raw != "" {
+		layout.Config = filepath.Clean(ExpandTilde(raw, home))
+	}
+	return layout
+}
+
+// Resolve turns a manifest target into a path on this machine. `~` is the home
+// directory and `~/.claude` is the configuration directory — the same place
+// unless CLAUDE_CONFIG_DIR moved it.
+//
+// The remainder is converted from the manifest's "/" to the platform's
+// separator here, which is the one boundary where a target stops being text the
+// manifest wrote and becomes a path the filesystem will be asked about.
+func (l Layout) Resolve(target string) string {
+	switch {
+	case target == "~":
+		return filepath.Clean(l.Home)
+	case target == configDirTarget:
+		return filepath.Clean(l.Config)
+	case strings.HasPrefix(target, configDirTarget+"/"):
+		return l.join(l.Config, target[len(configDirTarget)+1:])
+	case strings.HasPrefix(target, "~/"):
+		return l.join(l.Home, target[len("~/"):])
+	default:
+		return target
+	}
+}
+
+// Display is Resolve's inverse, used only for printing: a path shown as
+// ~/.claude/skills/x is the path the manifest names, spelled the way the
+// manifest spells it — with "/", on every platform.
+//
+// A path that is not under the home directory is printed as it is. That is the
+// honest answer for a configuration directory moved outside `~`: writing it back
+// as `~/.claude/...` would name a place the file is not.
+func (l Layout) Display(path string) string {
+	home := filepath.Clean(l.Home)
+	clean := filepath.Clean(path)
+	rest, under := ospath.Under(clean, home, l.GOOS)
+	switch {
+	case !under:
+		return clean
+	case rest == "":
+		return "~"
+	default:
+		return "~/" + ospath.ToSlash(rest, l.GOOS)
+	}
+}
+
+// SkillsDir is where doctor surveys for entries petkit does not manage.
+func (l Layout) SkillsDir() string {
+	return filepath.Join(l.Config, "skills")
+}
+
+// join sticks a "/"-written remainder onto an absolute base.
+func (l Layout) join(base, rest string) string {
+	return filepath.Join(base, ospath.FromSlash(rest, l.GOOS))
 }

@@ -1,7 +1,9 @@
 package state_test
 
 import (
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -151,5 +153,51 @@ func TestCheckRefusesSomethingThatIsNotAGitCheckout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "/tmp/not-a-repo") {
 		t.Errorf("the error does not name the path: %v", err)
+	}
+}
+
+// git is the one external program petkit runs, and a machine without it is the
+// likeliest first failure on a fresh Windows install — git is not part of that
+// system the way it is in a developer's Unix shell.
+//
+// ⚠️ Built rather than provoked, for the same reason the Windows symlink
+// failure is: this machine has git, so the only way to measure the message it
+// would print without it is to hand the function the error exec returns.
+func TestGitMissingFromPathIsNamed(t *testing.T) {
+	missing := &exec.Error{Name: "git", Err: exec.ErrNotFound}
+
+	err := state.DescribeGitFailure("/somewhere", []string{"clone", "https://example.com/x", "/tmp/x"}, "", missing)
+	if err == nil {
+		t.Fatal("a missing git produced no error")
+	}
+	for _, want := range []string{"git is not installed", "PATH", "petkit setup", "petkit check"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the message does not mention %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "%PATH%") {
+		t.Errorf("exec's own wording reached the user: %v", err)
+	}
+}
+
+// The positive sibling: a git that ran and failed keeps the message it had,
+// which is git's own words about what went wrong.
+func TestAnOrdinaryGitFailureKeepsItsMessage(t *testing.T) {
+	err := state.DescribeGitFailure("/repo", []string{"describe", "--tags"},
+		"fatal: No names found, cannot describe anything.\n", errors.New("exit status 128"))
+
+	want := "git describe --tags in /repo: fatal: No names found, cannot describe anything."
+	if err == nil || err.Error() != want {
+		t.Errorf("DescribeGitFailure = %v, want %q", err, want)
+	}
+}
+
+// And a failure with nothing on stderr still says something.
+func TestAGitFailureWithNoStderrFallsBackToTheExitError(t *testing.T) {
+	err := state.DescribeGitFailure("/repo", []string{"status"}, "", errors.New("signal: killed"))
+
+	want := "git status in /repo: signal: killed"
+	if err == nil || err.Error() != want {
+		t.Errorf("DescribeGitFailure = %v, want %q", err, want)
 	}
 }

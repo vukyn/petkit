@@ -12,8 +12,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/vukyn/petkit/internal/manifest"
+	"github.com/vukyn/petkit/internal/ospath"
 )
 
 // Status is what petkit found at an item's target.
@@ -41,19 +43,19 @@ type ItemState struct {
 }
 
 // Inspect measures every item. It reads the filesystem and changes nothing.
-func Inspect(m *manifest.Manifest, home string) []ItemState {
+func Inspect(m *manifest.Manifest, layout manifest.Layout) []ItemState {
 	states := make([]ItemState, 0, len(m.Items))
 	for _, item := range m.Items {
-		states = append(states, inspectOne(item, m.Root, home))
+		states = append(states, inspectOne(item, m.Root, layout))
 	}
 	return states
 }
 
-func inspectOne(item manifest.Item, root, home string) ItemState {
+func inspectOne(item manifest.Item, root string, layout manifest.Layout) ItemState {
 	state := ItemState{
 		Item:   item,
-		Source: item.SourcePath(root),
-		Target: item.TargetPath(home),
+		Source: item.SourcePath(root, layout.GOOS),
+		Target: item.TargetPath(layout),
 	}
 
 	info, err := os.Lstat(state.Target)
@@ -84,7 +86,7 @@ func inspectOne(item manifest.Item, root, home string) ItemState {
 	}
 	state.Actual = filepath.Clean(destination)
 
-	if samePath(state.Actual, state.Source) {
+	if samePath(state.Actual, state.Source, layout.GOOS) {
 		state.Status = Linked
 	} else {
 		state.Status = Stale
@@ -102,8 +104,15 @@ func describe(info fs.FileInfo) string {
 // samePath compares two paths first literally and then, only if that fails,
 // through symlink resolution — so /var/folders/... and /private/var/folders/...
 // on macOS are recognised as one place.
-func samePath(a, b string) bool {
-	if filepath.Clean(a) == filepath.Clean(b) {
+//
+// ⚠️ The comparison goes through ospath.Equal rather than ==, because on Windows
+// `C:\x` and `c:\x` are one file. A byte comparison there calls a perfectly good
+// link `stale`, and `sync` then removes and recreates it — a write nobody asked
+// for, on the one path where petkit is allowed to delete something. Getting this
+// wrong is not a cosmetic mislabel; it is the destructive operation firing
+// without a reason.
+func samePath(a, b, goos string) bool {
+	if ospath.Equal(filepath.Clean(a), filepath.Clean(b), goos) {
 		return true
 	}
 	resolvedA, errA := filepath.EvalSymlinks(a)
@@ -111,7 +120,7 @@ func samePath(a, b string) bool {
 	if errA != nil || errB != nil {
 		return false
 	}
-	return resolvedA == resolvedB
+	return ospath.Equal(resolvedA, resolvedB, goos)
 }
 
 // ActionKind is what sync intends to do about one item.
@@ -196,10 +205,55 @@ func createLink(state ItemState) error {
 		return fmt.Errorf("cannot create the directory %s for item %q: %w", parent, state.Item.ID, err)
 	}
 	if err := os.Symlink(state.Source, state.Target); err != nil {
-		return fmt.Errorf("cannot link %s -> %s for item %q: %w",
-			state.Target, state.Source, state.Item.ID, err)
+		return linkFailure(state, err)
 	}
 	return nil
+}
+
+// ErrWindowsPrivilegeNotHeld is ERROR_PRIVILEGE_NOT_HELD (1314), what Windows
+// answers when a process asks for a symlink it is not allowed to create.
+//
+// ⚠️ It is a bare number here rather than a constant from golang.org/x/sys, and
+// it is not behind a //go:build windows file, so that a macOS test can build the
+// error and watch the translation happen. No Unix errno comes near 1314 — Linux
+// stops in the 130s, darwin in the 100s — so the match cannot fire by accident
+// on the platform that cannot produce it.
+const ErrWindowsPrivilegeNotHeld = syscall.Errno(1314)
+
+// ExplainSymlinkFailure turns a failed symlink into a sentence naming what
+// Windows refused and both ways out of it. It returns "" for every other error,
+// which is what leaves the ordinary message untouched everywhere else.
+//
+// ⚠️ The way out is never a copy. petkit installs by symlink because the
+// repository is the only copy — `git status` sees an edit to an installed skill
+// the same second — and a fallback that copied on the machine that could not
+// link would let that machine drift silently, which is the exact failure this
+// tool exists to prevent. So this explains and stops; it does not route around.
+func ExplainSymlinkFailure(err error, itemID, target string) string {
+	if !errors.Is(err, ErrWindowsPrivilegeNotHeld) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"cannot link %s for item %q: Windows does not let this process create a symlink "+
+			"(ERROR_PRIVILEGE_NOT_HELD). Two ways out: turn on Developer Mode "+
+			"(Settings > System > For developers > Developer Mode), or run this shell as "+
+			"Administrator. Then run `petkit sync` again. petkit will not copy the files "+
+			"instead — one copy is the whole design, and a copy would drift from the repository",
+		target, itemID)
+}
+
+// linkFailure is the one place a symlink failure becomes a message, so the
+// create path and the repoint path cannot report the same cause differently.
+//
+// The translated error deliberately does not wrap the syscall: the raw text it
+// replaces ("A required privilege is not held by the client") is what made the
+// failure illegible, and nothing in petkit matches on this error.
+func linkFailure(state ItemState, err error) error {
+	if explained := ExplainSymlinkFailure(err, state.Item.ID, state.Target); explained != "" {
+		return errors.New(explained)
+	}
+	return fmt.Errorf("cannot link %s -> %s for item %q: %w",
+		state.Target, state.Source, state.Item.ID, err)
 }
 
 func repointLink(state ItemState) error {
@@ -219,8 +273,7 @@ func repointLink(state ItemState) error {
 		return fmt.Errorf("cannot remove the symlink %s for item %q: %w", state.Target, state.Item.ID, err)
 	}
 	if err := os.Symlink(state.Source, state.Target); err != nil {
-		return fmt.Errorf("cannot link %s -> %s for item %q: %w",
-			state.Target, state.Source, state.Item.ID, err)
+		return linkFailure(state, err)
 	}
 	return nil
 }

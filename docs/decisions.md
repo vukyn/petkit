@@ -170,3 +170,191 @@ the way it is. The entries carry the same `AREA-NNN` codes.
          trims it — but if this repository ever takes a major version, `CloneURL`
          is the line that has to learn about it, and the symptom will be a clone
          that 404s rather than anything subtle.
+
+- [x] `LINK-004` ⚠️ **A symlink needs a privilege on Windows, and the refusal
+      arrived as a raw syscall number.** Fixed 2026-09-14, in the port that made
+      the tool correct on Windows.
+
+      **What was wrong.** `os.Symlink` fails with `ERROR_PRIVILEGE_NOT_HELD`
+      (1314) unless Developer Mode is on or the process is elevated. `sync`
+      wrapped it as `cannot link X -> Y for item "z": A required privilege is not
+      held by the client`, which names neither cause nor cure. It is the first
+      thing a new Windows machine hits, and the message sends the reader nowhere.
+
+      **What shipped.** `link.ExplainSymlinkFailure` translates that one errno
+      into a sentence carrying the item id, the target path, the constant's name
+      (`ERROR_PRIVILEGE_NOT_HELD` — the string the reader will search for), and
+      both ways out: Developer Mode in Settings, or an Administrator shell.
+      `linkFailure` is the single place a symlink failure becomes a message, so
+      the create path and the repoint path cannot diverge. Every other error
+      keeps its wording byte for byte.
+
+      ⚠️ **It does not fall back to copying, and that is the decision, not an
+      omission.** A copy on the machine that cannot link would leave the
+      installed skill and the repository free to drift, which is exactly what
+      `LINK-003` refused and what the symlink design exists to prevent. The
+      message says so in as many words, so the next reader does not add the
+      fallback as a kindness.
+
+      **How it is measured without Windows.** The errno is a plain
+      `syscall.Errno(1314)` constant, not behind a build tag, so a macOS test
+      builds the `*os.LinkError` Windows would produce and watches the
+      translation. No Unix errno comes near 1314 — Linux stops in the 130s,
+      darwin in the 100s — so the match cannot fire by accident on the platform
+      that cannot produce it. Two tests: the translation, and the positive
+      sibling proving an ordinary error (`no space left on device`) and a nil
+      error both pass through untranslated. Mutation-checked: forcing the guard
+      always-true turns `TestTheWindowsSymlinkPrivilegeFailureIsExplained` red.
+
+- [x] `LINK-005` ⚠️ **`status` called a perfectly good link `stale` on Windows,
+      and `sync` then performed the one destructive operation petkit has.** Fixed
+      2026-09-14.
+
+      **What was wrong.** `samePath` compared a symlink's destination with the
+      item's source using `==`. On Windows `C:\x` and `c:\x` are one file, and
+      the two spellings reach petkit from two places — one out of `os.Readlink`,
+      one built from the manifest. A byte comparison reports `stale`; `Plan`
+      turns `stale` into `Repoint`; `Repoint` **removes the symlink and recreates
+      it**. Not a cosmetic mislabel: the only removal petkit is ever allowed to
+      make, fired for no reason, on every single run.
+
+      **What shipped.** A new package, `internal/ospath`, holding the path
+      questions whose answer depends on the platform — `Equal`, `Key`, `Under`,
+      `FromSlash`, `ToSlash` — each taking the platform as an **argument**.
+      `samePath`, `Layout.Display` and doctor's managed-set all compare through
+      it. On Windows the comparison folds case and accepts either separator;
+      everywhere else it is the byte comparison it was.
+
+      ⚠️ **macOS is deliberately not folded**, even though its default filesystem
+      also ignores case. Whether an APFS volume folds is a property of how it was
+      formatted, so folding there would be a guess — and the generous direction
+      of that guess makes petkit call a genuinely stale link `linked`, which is
+      the wrong way to be wrong. Windows is the only special case.
+
+      ⚠️ **Manifest validation was deliberately NOT made case-insensitive.** Two
+      items claiming `~/x` and `~/X` are one target on Windows and two
+      everywhere else, but folding in `validateTarget` would make a manifest
+      valid on macOS and invalid on Windows — and the one thing `petkit.yaml` may
+      not be is machine-specific. It stays a run-time confusion rather than a
+      portable refusal; see the open Windows entry.
+
+      **Tests.** `TestOnWindowsALinkThatDiffersOnlyInCaseIsLeftAlone` asserts both
+      the status **and** the plan, because the plan is where the harm is; its
+      sibling `TestEverywhereElseALinkThatDiffersOnlyInCaseIsStale` asserts the
+      opposite verdict and a `Repoint`. The fixture is built so it reads the same
+      on a case-sensitive volume and a case-insensitive one. Mutation-checked:
+      restoring `==` in `samePath` turns the Windows test red.
+
+- [x] `MFST-005` ⚠️ **A manifest path written with a backslash escaped the home
+      directory on Windows and passed validation on macOS.** Found and fixed
+      2026-09-14, while auditing where a `/`-written target becomes a real path.
+
+      **What was wrong.** `MFST-004` refuses `~/../elsewhere` by cleaning the
+      remainder and looking for `..` or `../`. On macOS `filepath.Clean` leaves
+      `..\elsewhere` exactly as it is — a backslash is an ordinary character in a
+      Unix file name — so the check saw one harmless component and accepted it.
+      On Windows the same string cleans to `..\elsewhere` **as two components**
+      and resolves to the parent of the home directory. The manifest travels
+      between machines, so the machine that wrote it passed a check the machine
+      that read it needed. `source:` had the identical hole out of the
+      repository.
+
+      **What shipped.** A backslash in a target or a source is refused outright,
+      on every platform, naming the item and quoting the value. One spelling,
+      checked once, meaning the same thing everywhere — which is the same
+      argument that made `~` the only templating.
+
+      **The rest of the audit.** `filepath.Join` and `filepath.Clean` already
+      convert `/` on Windows, so the joins were not broken; what was missing was
+      that the conversion could not be *watched* from here. `ospath.FromSlash`
+      now performs it explicitly with the platform as a parameter, at the two
+      boundaries where manifest text becomes a path — `Layout.Resolve` and
+      `Item.SourcePath` — and `ospath.ToSlash` performs the inverse at the one
+      boundary where a path becomes text, `Layout.Display`. A path printed back
+      is now spelled the way `petkit.yaml` spells it (`~/.claude/skills/x`) on
+      every platform, so the line in `petkit status` and the line in the manifest
+      are the same string. `doctor`'s survey no longer splices a `/`-written
+      constant at all: `SkillsDirName` is gone, replaced by `Layout.SkillsDir()`.
+
+      **Tests.** `TestAManifestTargetResolvesUnderAWindowsRoot` and
+      `TestASourceResolvesUnderAWindowsRoot` resolve a `/`-written manifest path
+      under `C:\Users\me`, with the expectation written as a join onto a
+      remainder spelled with a **backslash** — an assertion that is correct on
+      both hosts and fails here the moment the conversion is dropped.
+      `TestTheSameTargetResolvesNativelyOnThisMachine` is the sibling.
+      `TestAPathWrittenWithBackslashesIsRefused` covers target, source and the
+      escaping case; `TestTheSamePathsWrittenWithSlashesAreAccepted` proves the
+      rule refuses the backslash and not the path. All mutation-checked.
+
+- [x] `CLI-006` ⚠️ **petkit installed into a directory nothing reads on any
+      machine that sets `CLAUDE_CONFIG_DIR`.** Fixed 2026-09-14.
+
+      **What was wrong.** Claude Code honours `CLAUDE_CONFIG_DIR`; petkit
+      hard-coded `~/.claude` in four places — the manifest targets, the settings
+      merge, the plugin survey and doctor's skills directory. On a machine that
+      sets the variable, `sync` reported success, `status` reported `linked`, and
+      Claude Code never saw any of it. ⚠️ **Not a Windows defect** — it is wrong
+      the same way on macOS and Linux, and it was found while auditing for
+      Windows only because both questions are "where does this path actually
+      come from".
+
+      **What shipped.** `manifest.Layout` — the machine a manifest is applied to:
+      what `~` means, what `~/.claude` means, and which platform's path rules
+      apply. `NewLayout` reads the variable (it wins when set and non-empty, and
+      a `~` inside it expands like any other), and every command takes the layout
+      rather than a bare home directory. `manifest.CollapseHome` was replaced by
+      `Layout.Display` and removed: two ways to spell one path is how the four
+      hard-codings happened in the first place.
+
+      ⚠️ **Only the configuration directory moves.** A target that is not under
+      `~/.claude` is still relative to the home directory — the variable says
+      where Claude Code's configuration lives, not where the user does. Asserted.
+
+      ⚠️ **The layout carries GOOS as a field**, set from `ospath.Current()` in
+      `main` and from a literal in a test. That is what lets a macOS test resolve
+      and print paths the way Windows would, in the same process, with no build
+      tag — and it is why this port added no `//go:build windows` file at all.
+
+      **Tests.** Measured end to end rather than at the resolver, because the
+      hard-codings were in the commands: `TestSyncInstallsIntoClaudeConfigDir`
+      (the link lands in the configured directory **and** nothing is left in
+      `~/.claude`), `TestDoctorSurveysTheClaudeConfigDir`,
+      `TestSettingsAndPluginsFollowClaudeConfigDir`, plus the unit cases for the
+      variable's precedence, its `~` expansion, and the unset default. Every one
+      mutation-checked.
+
+- [x] `CLI-007` **A missing git said `executable file not found in %PATH%`.**
+      Fixed 2026-09-14.
+
+      `setup` clones and `check` compares tags, both through `git`. Without git
+      on `PATH`, `exec` answers with a sentence that reads like an internal error
+      and never says that installing git is the fix. It is the likeliest first
+      failure on a fresh Windows machine, where git is not part of the system the
+      way it is in a developer's Unix shell.
+
+      `state.DescribeGitFailure` names the case in one sentence, saying which two
+      commands need git and what to do. Every other git failure keeps git's own
+      words byte for byte — `git describe --tags in /repo: fatal: …` is
+      unchanged, and so is the fallback to the exit error when stderr is empty.
+      Three tests, the first built from `&exec.Error{Err: exec.ErrNotFound}`
+      because this machine has git; mutation-checked.
+
+- [x] `CLI-008` **The config file stays at `.config/petkit/config.json` on every
+      OS.** Decided 2026-09-14, while making the tool correct on Windows.
+
+      `os.UserConfigDir()` would put it in `%AppData%` on Windows,
+      `~/Library/Application Support` on macOS and `~/.config` on Linux — three
+      paths for one file. It is **refused**, and the reason is that the path is
+      part of the interface: it is quoted in `petkit version`'s "not read" note,
+      in the "cannot find the petkit repository" message, in `README.md`, and in
+      the output of `petkit init`. One path means one answer to "where is the
+      record" — in a message, in a README, in a support question — and it means
+      an instruction written on one machine is correct on another.
+
+      ⚠️ **This is the record.** A convention doc will one day say to use
+      `os.UserConfigDir()`; it was considered here and rejected on purpose, and
+      `state.ConfigRelPath` is deliberately a single `/`-written constant run
+      through `filepath.FromSlash`. `~/.claude` is a separate question and got a
+      separate answer — it moved, because `CLAUDE_CONFIG_DIR` is another
+      program's decision that petkit has to follow (`CLI-006`). The config file
+      is petkit's own, and petkit keeps it in one place.

@@ -49,8 +49,11 @@ defect fixed in `internal/link` is still `SETT`.
 |---|---|---|
 | `LINK-001` | done | Symlink install: `status`, `sync`, `doctor` |
 | `LINK-002` | open | A real directory where a link should go can only be refused — there is no way to adopt one |
+| `LINK-004` | done | Windows refuses `os.Symlink` without Developer Mode or elevation; the errno is now translated into a message naming the cause and both ways out — and never into a copy |
+| `LINK-005` | done | `status` called a good link `stale` on Windows, so `sync` removed and recreated it every run: path comparison now folds case on Windows only |
 | `MFST-001` | done | The manifest and its validation |
 | `MFST-004` | done | `~/` is a prefix, not a fence — `~/../elsewhere` passed validation and only `doctor` objected, after `sync` had already made the link. Moved into `validateTarget`; doctor's branch deleted as unreachable |
+| `MFST-005` | done | A backslash in a target or source escaped the home directory on Windows and passed validation on macOS; refused everywhere, and the `/`→separator conversion is now explicit and watchable from here |
 | `MFST-002` | open | `kind:` is decorative — nothing behaves differently per kind, so it is either a rule or a comment |
 | `SETT-001` | done | The settings fragment and its merge |
 | `SETT-002` | open | Nothing notices when a machine's `settings.json` drifts from the fragment |
@@ -61,9 +64,13 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-003` | done | The command surface moved to `urfave/cli/v3` — every documented message byte-identical, and an undefined flag is now refused instead of silently ignored |
 | `CLI-004` | done | `petkit version` printed a whole pseudo-version on a dirty tree: `+dirty` is build metadata and the anchored pattern did not allow for it |
 | `CLI-005` | done | `petkit setup` clones the repository this binary was built from, records it, and reports what `sync` would do — install, one command, done |
+| `CLI-006` | done | `CLAUDE_CONFIG_DIR` is honoured — petkit hard-coded `~/.claude`, so a machine that sets it was having everything installed where nothing reads it. Wrong on every OS, not only Windows |
+| `CLI-007` | done | A missing git said `executable file not found in %PATH%`; it now names git and says what needs it |
 | `CLI-002` | open | A binary can now clone itself a repository, but `check` still fails without one — what is left is whether it should answer from the tags API instead |
+| `CLI-009` | open | Nothing has ever run on Windows — the port is compile-checked and unit-checked from macOS, and the machine itself is unmeasured |
 | `DOC-001` | open | Fourteen stale skill copies still sit in `~/.claude/skills`, and it is unmeasured whether they shadow the plugin's own |
 | `LINK-003` | refused | Installing by copy instead of by symlink |
+| `CLI-008` | refused | Moving the config file to `os.UserConfigDir()` — it stays at `.config/petkit/config.json` on every OS |
 | `PLUG-003` | refused | Installing plugins ourselves instead of printing `claude plugin` commands |
 | `MFST-003` | refused | Tracking another repository's agents, commands and scripts |
 
@@ -97,6 +104,20 @@ defect fixed in `internal/link` is still `SETT`.
   records it through `petkit init`'s own recorder, and prints what `status`
   would print plus the next command. ⚠️ It **creates no symlink** without
   `--sync`, and it overwrites nothing: the target must be missing or empty.
+
+- `LINK-004` / `LINK-005` / `MFST-005` / `CLI-006` / `CLI-007` **Windows.** The
+  tool is now written to be correct on Windows: the symlink privilege refusal is
+  translated into a message naming Developer Mode and an Administrator shell
+  (and ⚠️ **never** into a copy — one copy is the whole design); path comparison
+  folds case on Windows only, so a good link is no longer called `stale` and
+  repointed every run; a backslash in a manifest path is refused everywhere,
+  because it escaped the home directory on Windows while passing validation on
+  macOS; `CLAUDE_CONFIG_DIR` decides where `~/.claude` is on **every** OS; and a
+  missing `git` is named. ⚠️ **No `//go:build windows` file was added.** The
+  platform is a parameter — `manifest.Layout.GOOS`, and every function in the new
+  `internal/ospath` — so a macOS test runs the Windows branch in the same
+  process. ⚠️ It is compile-checked (`GOOS=windows` build and vet) and
+  unit-checked; **nothing has run on Windows** — that is `CLI-009`.
 
 ## Not done
 
@@ -212,6 +233,66 @@ defect fixed in `internal/link` is still `SETT`.
       when there is no repository, or its error names both ways out in one
       sentence — which is cheap and might be the whole answer.
 
+- [ ] `CLI-009` ⚠️ **Nothing has ever run on Windows.** Raised 2026-09-14 with
+      the port that made the code correct there.
+
+      **What is measured.** `GOOS=windows GOARCH=amd64 go build ./...` and
+      `GOOS=windows go vet ./...` are clean, and every Windows branch has a unit
+      test that runs on macOS with the platform passed in as a parameter. That is
+      the whole of the evidence. **Compiling is not running**, and no line of
+      this has touched a Windows filesystem, a Windows `%USERPROFILE%`, a Windows
+      `git`, or a real `ERROR_PRIVILEGE_NOT_HELD`.
+
+      **What to run, in the order the risk runs.** ⚠️ Do this in a shell with
+      Developer Mode **off** first — the interesting failure is the one that does
+      not happen on a developer's own box.
+
+      1. `go install github.com/vukyn/petkit/cmd/petkit@latest`, then
+         `petkit setup`. This is the first thing a new machine does and the first
+         thing that runs `git`. If git is missing you should get the sentence
+         naming git, not `executable file not found in %PATH%`.
+      2. `petkit sync` **without** Developer Mode. Expect the
+         `ERROR_PRIVILEGE_NOT_HELD` message naming Developer Mode and
+         Administrator. ⚠️ If it instead reports `conflict`, or succeeds, the
+         errno did not arrive in the shape the translation expects — dump
+         `%+v` of the raw error before changing anything.
+      3. Turn Developer Mode on, `petkit sync`, then **`petkit sync` again**.
+         The second run must print `ok` for every item and `nothing to do`. ⚠️
+         **This is the single most important line to look at.** If it prints
+         `repoint`, the case/separator comparison is still wrong and petkit is
+         deleting and recreating a good symlink on every run.
+      4. `petkit status` and `petkit doctor`. Targets should print as
+         `~/.claude/skills/x` with forward slashes; doctor must not list an item
+         petkit itself installed as "not in the manifest".
+      5. `set CLAUDE_CONFIG_DIR=%USERPROFILE%\somewhere-else` and repeat 3 and 4.
+      6. `petkit check` in the clone.
+
+      **Two things known to be unmeasurable from macOS, so look at them first.**
+
+      - ⚠️ **`doctor`'s survey under a Windows layout.** The decision
+        underneath it — does this directory entry belong to an item? — is tested
+        directly in `doctor_internal_test.go`, because a Windows layout resolved
+        on a macOS filesystem produces paths this filesystem cannot hold in the
+        shape Windows would (the remainder's separator becomes a backslash, and
+        `~/.claude/skills` is then not that file's parent). The **wiring** from
+        `os.ReadDir` into that decision is therefore unexercised. Step 4 above is
+        the test.
+      - ⚠️ **A missing source makes a broken link, not a refused one.** Go's
+        `os.Symlink` on Windows picks the file flavour or the directory flavour
+        of a symlink by looking at the destination, so a source that is not there
+        yet yields a *file* symlink pointing at a directory — broken in a way
+        Unix does not reproduce, because Unix symlinks have no flavour. `doctor`
+        reports a missing source; `sync` does not refuse one. Reproduce by
+        removing a source directory and running `sync`.
+
+      **One defect deliberately left open.** Two items claiming `~/x` and `~/X`
+      are one target on Windows and two everywhere else. Validation does **not**
+      fold case, because a manifest valid on macOS and invalid on Windows is the
+      machine-specific `petkit.yaml` the whole design refuses. On Windows those
+      two items will fight over one path, run after run. If it ever happens, the
+      answer is a refusal in `validateTarget` that is case-insensitive on every
+      platform — not one that consults `GOOS`.
+
 - [ ] `DOC-001` ⚠️ **Fourteen stale skill copies sit in the skills directory, and
       it is unmeasured whether they shadow the plugin's own.** Raised 2026-09-14
       out of the curation that produced this repository.
@@ -245,6 +326,17 @@ defect fixed in `internal/link` is still `SETT`.
   the clone breaks every link, and a mistake made in `~/.claude/skills` is a
   mistake made in the repository. ⚠️ Re-raise only for a machine that cannot keep
   a clone — and then as a *second mode*, not as a replacement.
+
+- `CLI-008` **Moving the config file to `os.UserConfigDir()`.** Considered on
+  2026-09-14 while making the tool correct on Windows, and refused: it would put
+  the record in `%AppData%` on Windows, `~/Library/Application Support` on macOS
+  and `~/.config` on Linux — three paths for one file. The path is part of the
+  interface. It is quoted in `petkit version`'s "not read" note, in the "cannot
+  find the petkit repository" message, in `README.md` and in what `petkit init`
+  prints, and one path means an instruction written on one machine is correct on
+  another. It stays `.config/petkit/config.json` everywhere. ⚠️ The full record,
+  including why `~/.claude` moved and this did not, is in `docs/decisions.md`
+  under `CLI-008` — re-raise only from there.
 
 - `PLUG-003` **Installing plugins ourselves instead of printing `claude plugin`
   commands.** `claude plugin` already resolves marketplaces, caches by commit sha,

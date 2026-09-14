@@ -65,6 +65,21 @@ because there is no second copy.
 | `petkit check` | the tag you are on, the newest tag upstream, whether the tree is dirty |
 | `petkit version` | the build version and the item count |
 
+## Windows
+
+Windows will not let an ordinary process create a symlink, so the first
+`petkit sync` on a fresh machine fails until you **turn on Developer Mode**
+(Settings → System → For developers) or run the shell as Administrator. petkit
+says so by name when it happens. ⚠️ It will **not** fall back to copying the
+files instead: one copy is the whole design — editing a skill in the repository
+*is* editing the installed one — and a copy would drift.
+
+`CLAUDE_CONFIG_DIR` is honoured. If you set it, that is where the links, the
+settings merge and the plugin survey go, instead of `~/.claude` — on every
+platform, not just this one. The record `petkit init` writes stays at
+`~/.config/petkit/config.json` everywhere, deliberately: it is a path petkit
+quotes back at you in half its messages, and one path means one answer.
+
 ## What it will not do
 
 ⚠️ **`setup` never overwrites and never links.** The directory it clones into

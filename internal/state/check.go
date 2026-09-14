@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -20,13 +21,33 @@ func GitRunner(dir string, args ...string) (string, error) {
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		message := strings.TrimSpace(stderr.String())
-		if message == "" {
-			message = err.Error()
-		}
-		return "", fmt.Errorf("git %s in %s: %s", strings.Join(args, " "), dir, message)
+		return "", DescribeGitFailure(dir, args, stderr.String(), err)
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// DescribeGitFailure turns a failed git invocation into the message petkit
+// prints. It is a function rather than four lines inside GitRunner so that the
+// one case a machine cannot demonstrate — no git at all — can be measured on a
+// machine that has git.
+//
+// ⚠️ The "not found" case is named rather than passed through. exec answers
+// `exec: "git": executable file not found in %PATH%`, which reads like an
+// internal error and does not say that installing git is the fix. It is the
+// likeliest first failure on a fresh Windows machine, where git is not part of
+// the system the way it is in a developer's Unix shell.
+func DescribeGitFailure(dir string, args []string, stderr string, err error) error {
+	if errors.Is(err, exec.ErrNotFound) {
+		return errors.New(
+			"git is not installed, or not on this shell's PATH — petkit runs git to clone the " +
+				"repository (`petkit setup`) and to compare tags (`petkit check`); install git, " +
+				"or open a shell that has it, and run the command again")
+	}
+	message := strings.TrimSpace(stderr)
+	if message == "" {
+		message = err.Error()
+	}
+	return fmt.Errorf("git %s in %s: %s", strings.Join(args, " "), dir, message)
 }
 
 // CheckResult is the "is there a newer version" answer.

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/vukyn/petkit/internal/manifest"
+	"github.com/vukyn/petkit/internal/ospath"
 )
 
 func parse(t *testing.T, body string) (*manifest.Manifest, error) {
@@ -225,13 +226,14 @@ func TestTildeIsTheOnlyTemplating(t *testing.T) {
 	}
 }
 
-func TestCollapseHomeIsTheInverseOfExpansion(t *testing.T) {
+func TestDisplayIsTheInverseOfExpansion(t *testing.T) {
 	home := "/tmp/home"
-	expanded := manifest.ExpandTilde("~/.claude/skills/x", home)
-	if got := manifest.CollapseHome(expanded, home); got != "~/.claude/skills/x" {
-		t.Errorf("CollapseHome(%q) = %q", expanded, got)
+	layout := manifest.NewLayout(home, ospath.Current(), nil)
+	expanded := layout.Resolve("~/.claude/skills/x")
+	if got := layout.Display(expanded); got != "~/.claude/skills/x" {
+		t.Errorf("Display(%q) = %q", expanded, got)
 	}
-	if got := manifest.CollapseHome("/elsewhere/x", home); got != "/elsewhere/x" {
+	if got := layout.Display("/elsewhere/x"); got != "/elsewhere/x" {
 		t.Errorf("a path outside the home directory was collapsed to %q", got)
 	}
 }
@@ -251,7 +253,7 @@ func TestTheRepositoryManifestIsValid(t *testing.T) {
 		t.Fatalf("the repository's own manifest is invalid: %v", err)
 	}
 	for _, item := range loaded.Items {
-		if _, err := os.Stat(item.SourcePath(root)); err != nil {
+		if _, err := os.Stat(item.SourcePath(root, ospath.Current())); err != nil {
 			t.Errorf("item %q names a source that is not in the repository: %v", item.ID, err)
 		}
 	}
