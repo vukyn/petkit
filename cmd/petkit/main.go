@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -224,7 +225,7 @@ func newRootCommand(environment environment) *cli.Command {
 			{
 				Name:         "plugins",
 				Usage:        "the claude commands that would match the manifest",
-				UsageText:    "petkit plugins plan",
+				UsageText:    "petkit plugins <plan|capture>",
 				OnUsageError: usageError(environment),
 				Commands: []*cli.Command{
 					{
@@ -236,10 +237,24 @@ func newRootCommand(environment environment) *cli.Command {
 							return commandPluginsPlan(environment)
 						},
 					},
+					{
+						Name:         "capture",
+						Usage:        "rewrite settings/plugins.json from what this machine has",
+						UsageText:    "petkit plugins capture",
+						OnUsageError: usageError(environment),
+						Action: func(context.Context, *cli.Command) error {
+							return commandPluginsCapture(environment)
+						},
+					},
 				},
-				Action: func(context.Context, *cli.Command) error {
+				Action: func(_ context.Context, command *cli.Command) error {
+					if name := command.Args().First(); name != "" {
+						fmt.Fprintf(environment.stderr,
+							"petkit plugins: unknown subcommand %q; say plan or capture\n", name)
+						return errUsage
+					}
 					fmt.Fprintln(environment.stderr,
-						"petkit plugins: say plan (petkit never installs anything itself)")
+						"petkit plugins: say plan or capture (petkit never installs anything itself)")
 					return errUsage
 				},
 			},
@@ -359,11 +374,45 @@ func locate(environment environment) (state.Location, error) {
 }
 
 func loadManifest(environment environment) (*manifest.Manifest, error) {
+	_, loaded, err := loadFrom(environment)
+	return loaded, err
+}
+
+// loadFrom resolves the repository and reads its manifest, keeping the location
+// as well: every command that acts on the repository has to say which one it
+// resolved, and that answer is thrown away by the time the manifest is in hand.
+func loadFrom(environment environment) (state.Location, *manifest.Manifest, error) {
 	location, err := locate(environment)
 	if err != nil {
-		return nil, err
+		return state.Location{}, nil, err
 	}
-	return manifest.Load(location.Root)
+	loaded, err := manifest.Load(location.Root)
+	if err != nil {
+		return location, nil, err
+	}
+	return location, loaded, nil
+}
+
+// reportRepository names the repository a command is acting on and how it was
+// chosen. One line, always, on every command where acting on the wrong
+// repository costs something.
+//
+// ⚠️ The reason it is unconditional is the case in the second branch. The
+// repository is resolved by walking up from the working directory FIRST, so a
+// machine set up at one path, whose shell happens to sit inside another clone,
+// gets the other one — and `sync` then repoints every link into it. Nothing was
+// wrong from petkit's side and nothing said anything, so the only way to notice
+// was to read the paths in the plan. When the two disagree the line says both:
+// what was used, and what `petkit init` recorded.
+func reportRepository(environment environment, location state.Location) {
+	used := environment.layout.Display(location.Root)
+	if location.Recorded != "" &&
+		!ospath.Equal(location.Recorded, location.Root, environment.layout.GOOS) {
+		fmt.Fprintf(environment.stdout, "%-10s %s (%s) — but petkit init recorded %s\n",
+			"repository", used, location.How, environment.layout.Display(location.Recorded))
+		return
+	}
+	fmt.Fprintf(environment.stdout, "%-10s %s (%s)\n", "repository", used, location.How)
 }
 
 func commandVersion(environment environment) error {
@@ -382,11 +431,54 @@ func commandVersion(environment environment) error {
 }
 
 func commandStatus(environment environment) error {
-	loaded, err := loadManifest(environment)
+	location, loaded, err := loadFrom(environment)
 	if err != nil {
 		return err
 	}
-	return statusOf(environment, loaded)
+	reportRepository(environment, location)
+	if err := statusOf(environment, loaded); err != nil {
+		return err
+	}
+	reportSettings(environment, location.Root)
+	return nil
+}
+
+// reportSettings is the one line that says whether the settings file on this
+// machine still says what the fragment says.
+//
+// ⚠️ It reports and never fails. `settings diff` answers this question when
+// asked and nothing asks it, so a machine where the fragment was applied months
+// ago and has been edited by hand since reports `linked` on every skill and is
+// still not the machine the repository describes. Drift is a fact about a
+// machine, not a broken command: status keeps its exit code of 0 on every path
+// through here, including the paths where the comparison itself cannot be made.
+func reportSettings(environment environment, root string) {
+	livePath := filepath.Join(environment.layout.Config, "settings.json")
+	shown := environment.layout.Display(livePath)
+
+	fragmentPath := filepath.Join(root, "settings", "fragment.json")
+	fragment, err := os.ReadFile(fragmentPath)
+	if err != nil {
+		fmt.Fprintf(environment.stdout, "%-10s not compared: cannot read %s (%v)\n",
+			"settings", fragmentPath, err)
+		return
+	}
+
+	drift, err := settings.Inspect(livePath, fragment)
+	switch {
+	case err != nil:
+		fmt.Fprintf(environment.stdout, "%-10s not compared: %v\n", "settings", err)
+	case drift.Absent:
+		fmt.Fprintf(environment.stdout,
+			"%-10s %s is absent; `petkit settings apply` would create it\n", "settings", shown)
+	case drift.InStep():
+		fmt.Fprintf(environment.stdout,
+			"%-10s %s is in step with the fragment\n", "settings", shown)
+	default:
+		fmt.Fprintf(environment.stdout,
+			"%-10s %s has drifted from the fragment in %d key(s); `petkit settings diff` says which\n",
+			"settings", shown, len(drift.Changes))
+	}
 }
 
 // statusOf is the whole of status once the manifest is in hand. setup reports
@@ -415,10 +507,11 @@ func statusOf(environment environment, loaded *manifest.Manifest) error {
 }
 
 func commandSync(environment environment, dryRun bool) error {
-	loaded, err := loadManifest(environment)
+	location, loaded, err := loadFrom(environment)
 	if err != nil {
 		return err
 	}
+	reportRepository(environment, location)
 	return syncOf(environment, loaded, dryRun)
 }
 
@@ -477,10 +570,11 @@ func syncOf(environment environment, loaded *manifest.Manifest, dryRun bool) err
 }
 
 func commandDoctor(environment environment) error {
-	loaded, err := loadManifest(environment)
+	location, loaded, err := loadFrom(environment)
 	if err != nil {
 		return err
 	}
+	reportRepository(environment, location)
 
 	findings := link.Doctor(loaded, environment.layout)
 	problems := 0
@@ -520,17 +614,14 @@ func withFragment(environment environment, action func(environment environment, 
 }
 
 func settingsDiff(environment environment, livePath string, fragment []byte) error {
-	live, err := os.ReadFile(livePath)
-	if os.IsNotExist(err) {
-		live = []byte("{}")
-	} else if err != nil {
-		return fmt.Errorf("cannot read %s: %w", livePath, err)
-	}
-
-	changes, err := settings.Diff(live, fragment)
+	// The same comparison `status` counts for its drift line. One reader, one
+	// comparison: a second one would be free to disagree with the command the
+	// drift line tells the reader to run.
+	drift, err := settings.Inspect(livePath, fragment)
 	if err != nil {
 		return err
 	}
+	changes := drift.Changes
 	shown := environment.layout.Display(livePath)
 	if len(changes) == 0 {
 		fmt.Fprintf(environment.stdout, "%s already says what the fragment says\n", shown)
@@ -566,12 +657,18 @@ func settingsApply(environment environment, livePath string, fragment []byte) er
 	return nil
 }
 
+// pluginsManifestPath is the file `plugins plan` reads and `plugins capture`
+// writes.
+func pluginsManifestPath(root string) string {
+	return filepath.Join(root, "settings", "plugins.json")
+}
+
 func commandPluginsPlan(environment environment) error {
 	location, err := locate(environment)
 	if err != nil {
 		return err
 	}
-	desired, err := plugins.LoadDesired(filepath.Join(location.Root, "settings", "plugins.json"))
+	desired, err := plugins.LoadDesired(pluginsManifestPath(location.Root))
 	if err != nil {
 		return err
 	}
@@ -596,18 +693,84 @@ func commandPluginsPlan(environment environment) error {
 	return nil
 }
 
+// commandPluginsCapture rewrites settings/plugins.json from what this machine
+// actually has.
+//
+// ⚠️ It writes into the repository, not into the home directory, and it is the
+// only command that does. That is why it goes through the same backup → temp →
+// rename that `settings apply` uses: the file it replaces is hand-curated, and
+// a capture that turns out to be wrong has to be recoverable without git.
+func commandPluginsCapture(environment environment) error {
+	location, err := locate(environment)
+	if err != nil {
+		return err
+	}
+	path := pluginsManifestPath(location.Root)
+
+	captured, err := plugins.Capture(filepath.Join(environment.layout.Config, "plugins"))
+	if err != nil {
+		return err
+	}
+	content, err := plugins.Encode(captured)
+	if err != nil {
+		return err
+	}
+
+	// A missing file is the first capture, not a failure.
+	var before *plugins.Desired
+	existing, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if before, err = plugins.LoadDesired(path); err != nil {
+			return err
+		}
+	case !os.IsNotExist(err):
+		return fmt.Errorf("cannot read %s: %w", path, err)
+	}
+
+	shown := environment.layout.Display(path)
+	if bytes.Equal(existing, content) {
+		fmt.Fprintf(environment.stdout,
+			"%s already says what this machine has; nothing was written\n", shown)
+		return nil
+	}
+
+	for _, line := range plugins.Changes(before, captured) {
+		fmt.Fprintf(environment.stdout, "%s\n", line)
+	}
+
+	backupPath, err := settings.WriteWithBackup(path, content, 0o644, time.Now())
+	if err != nil {
+		return err
+	}
+	if backupPath != "" {
+		fmt.Fprintf(environment.stdout, "backup %s\n", environment.layout.Display(backupPath))
+	}
+	fmt.Fprintf(environment.stdout, "wrote  %s\n", shown)
+	fmt.Fprintln(environment.stdout,
+		"\nThe version of each plugin is what this machine has today — a reading, not a pin.\n"+
+			"Commit the file if this machine is the one the repository should describe.")
+	return nil
+}
+
 func commandCheck(environment environment) error {
 	location, err := locate(environment)
 	if err != nil {
 		return err
 	}
 
-	result, err := state.Check(location.Root, state.GitRunner)
+	// environment.git, not state.GitRunner: git is a parameter for the same
+	// reason the home directory is one, and check was the one command still
+	// reaching for the real thing — which is why nothing could test it.
+	result, err := state.Check(location.Root, environment.git)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(environment.stdout, "repository %s\n", result.Root)
+	// check printed its own `repository <absolute path>` line before CLI-010.
+	// It prints the shared one now: the same question, answered the same way in
+	// every command, and with the "how" it never used to say.
+	reportRepository(environment, location)
 	if result.FetchNote != "" {
 		fmt.Fprintf(environment.stdout, "fetch      %s\n", result.FetchNote)
 	}

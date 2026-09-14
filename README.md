@@ -57,13 +57,42 @@ because there is no second copy.
 | command | what it does |
 |---|---|
 | `petkit setup [path] [--sync]` | clone the repository this binary came from, record it, and say what `sync` would do |
-| `petkit status` | one line per item: `linked`, `missing`, `stale`, `conflict` |
+| `petkit status` | one line per item, plus whether `settings.json` is in step with the fragment |
 | `petkit sync [--dry-run]` | create the missing links, repoint the stale ones |
 | `petkit doctor` | broken links, unmanaged entries, sources that do not exist |
 | `petkit settings diff\|apply` | merge `settings/fragment.json` into `~/.claude/settings.json` |
 | `petkit plugins plan` | print the `claude plugin …` commands this machine is missing |
+| `petkit plugins capture` | rewrite `settings/plugins.json` from what this machine has |
 | `petkit check` | the tag you are on, the newest tag upstream, whether the tree is dirty |
 | `petkit version` | the build version and the item count |
+
+## Which repository am I acting on?
+
+`status`, `sync`, `doctor` and `check` each begin with one line saying which
+repository they resolved and how:
+
+```
+repository ~/.petkit (recorded by petkit init)
+```
+
+The repository is found by **walking up from the working directory** first, then
+`$PETKIT_HOME`, then the path `petkit init` recorded — so running petkit from
+inside a second clone acts on that clone, and `sync` there repoints every link
+into it. That is deliberate (it is what makes a fresh checkout usable before
+`init`), so the line says both when they disagree:
+
+```
+repository ~/src/other-petkit (walked up from the working directory) — but petkit init recorded ~/.petkit
+```
+
+`petkit status` ends with one more line, about the file that is merged rather
+than linked:
+
+```
+settings   ~/.claude/settings.json has drifted from the fragment in 2 key(s); `petkit settings diff` says which
+```
+
+It is a report, never a failure: `status` exits 0 whatever it finds.
 
 ## Windows
 
@@ -99,6 +128,14 @@ preferences — model, permission mode, skill overrides — not a replacement fi
 ⚠️ **`plugins plan` prints; it never runs.** `claude plugin` owns plugin
 installation and does it better; what this repository adds is the *list*, so a
 new machine knows what it is missing.
+
+⚠️ **`plugins capture` writes one file, and it is in the repository** — the only
+file petkit rewrites outside your home directory. It records the id, the scope
+and the version of each plugin and each marketplace's source, and **nothing
+else**: the live files carry absolute paths into whatever repository a
+project-scoped plugin was installed for, and those never reach the manifest. The
+version it records is what this machine has **today** — a reading, not a pin;
+`claude plugin install` has no version flag to pin with.
 
 ## What belongs here, and what does not
 

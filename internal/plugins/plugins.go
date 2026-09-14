@@ -15,10 +15,14 @@ import (
 )
 
 // Desired is settings/plugins.json: the captured plugin set.
+//
+// ⚠️ The field order is the order `petkit plugins capture` writes them in, and
+// it is the order the committed file already has. Encoding is the only reason
+// it matters; decoding does not care.
 type Desired struct {
+	Enabled      map[string]bool        `json:"enabled"`
 	Marketplaces map[string]Marketplace `json:"marketplaces"`
 	Plugins      []Plugin               `json:"plugins"`
-	Enabled      map[string]bool        `json:"enabled"`
 }
 
 // Marketplace is where a plugin comes from.
@@ -27,7 +31,15 @@ type Marketplace struct {
 	Source string `json:"source"`
 }
 
-// Plugin is one captured plugin at the version that was captured.
+// Plugin is one plugin the manifest records.
+//
+// ⚠️ Version is the version **last seen** on the machine that captured it, not
+// a version to install. `claude plugin install` takes `--config`, `--json`,
+// `-s/--scope` and `-y/--yes` and **no version flag at all** (measured
+// 2026-09-14), so there is nothing to pin it to; at least one marketplace also
+// carries `autoUpdate: true`, which would move it underneath a pin if one
+// existed. It is kept because a recorded reading is how a machine notices it is
+// running something older — see PLUG-002.
 type Plugin struct {
 	ID      string `json:"id"`
 	Scope   string `json:"scope"`
@@ -76,28 +88,12 @@ func LoadLive(pluginsDir string) (*Live, error) {
 		Enabled:      map[string]bool{},
 	}
 
-	var known map[string]struct {
-		Source struct {
-			Source string `json:"source"`
-			Repo   string `json:"repo"`
-		} `json:"source"`
-	}
-	if err := readJSONIfPresent(filepath.Join(pluginsDir, "known_marketplaces.json"), &known); err != nil {
+	known, installed, err := readLiveFiles(pluginsDir)
+	if err != nil {
 		return nil, err
 	}
 	for name, entry := range known {
 		live.Marketplaces[name] = entry.Source.Repo
-	}
-
-	var installed struct {
-		Plugins map[string][]struct {
-			Scope   string `json:"scope"`
-			Version string `json:"version"`
-		} `json:"plugins"`
-		EnabledPlugins map[string]bool `json:"enabledPlugins"`
-	}
-	if err := readJSONIfPresent(filepath.Join(pluginsDir, "installed_plugins.json"), &installed); err != nil {
-		return nil, err
 	}
 	for id, entries := range installed.Plugins {
 		version := ""
@@ -110,6 +106,52 @@ func LoadLive(pluginsDir string) (*Live, error) {
 		live.Enabled[id] = enabled
 	}
 	return live, nil
+}
+
+// liveMarketplace is one entry of ~/.claude/plugins/known_marketplaces.json, as
+// much of it as petkit reads.
+//
+// ⚠️ The file's entries also carry `installLocation` — an absolute path into
+// the machine's plugin cache — and `lastUpdated`. Neither is declared here, so
+// neither can be read, and a capture built out of this type has nowhere to put
+// them even by accident.
+type liveMarketplace struct {
+	Source struct {
+		Source string `json:"source"`
+		Repo   string `json:"repo"`
+	} `json:"source"`
+}
+
+// liveInstalled is ~/.claude/plugins/installed_plugins.json, as much of it as
+// petkit reads.
+//
+// ⚠️ Each entry in the real file also carries `installPath`, `installedAt`,
+// `gitCommitSha` and — on every project-scoped entry — `projectPath`, an
+// absolute path into whatever repository the plugin was installed for. None of
+// them is declared here. That is the reduction PLUG-004 is about, and it is
+// enforced by the type rather than by remembering to drop fields.
+type liveInstalled struct {
+	Plugins map[string][]struct {
+		Scope   string `json:"scope"`
+		Version string `json:"version"`
+	} `json:"plugins"`
+	EnabledPlugins map[string]bool `json:"enabledPlugins"`
+}
+
+// readLiveFiles reads both of a machine's plugin files. It is one function
+// because both readers — the plan's and the capture's — must agree about what
+// the files contain; two readers is two answers.
+func readLiveFiles(pluginsDir string) (map[string]liveMarketplace, liveInstalled, error) {
+	var known map[string]liveMarketplace
+	var installed liveInstalled
+
+	if err := readJSONIfPresent(filepath.Join(pluginsDir, "known_marketplaces.json"), &known); err != nil {
+		return nil, installed, err
+	}
+	if err := readJSONIfPresent(filepath.Join(pluginsDir, "installed_plugins.json"), &installed); err != nil {
+		return nil, installed, err
+	}
+	return known, installed, nil
 }
 
 func readJSONIfPresent(path string, into any) error {
@@ -153,16 +195,22 @@ func Build(desired *Desired, live *Live) Plan {
 	for _, plugin := range desired.Plugins {
 		installedVersion, installed := live.Installed[plugin.ID]
 		if !installed {
+			// ⚠️ The id, and nothing else. `claude plugin install` has no
+			// version flag, so there is no version to append here — and a
+			// recorded version that looked like an argument would be read as
+			// one. See the Plugin type: the version is a reading.
 			plan.Commands = append(plan.Commands, Command{
 				Line: fmt.Sprintf("claude plugin install %s", plugin.ID),
-				Why: fmt.Sprintf("not installed; the manifest captured version %s (%s scope)",
+				Why: fmt.Sprintf("not installed; last seen at %s (%s scope) — a reading, not a pin, "+
+					"so this installs whatever the marketplace offers today",
 					plugin.Version, plugin.Scope),
 			})
 			continue
 		}
 		if installedVersion != plugin.Version {
 			plan.Notes = append(plan.Notes, fmt.Sprintf(
-				"%s is installed at %s; the manifest captured %s — update it if the difference matters",
+				"%s is installed at %s; last seen at %s — the manifest records a reading, not a pin, "+
+					"so this is a difference to look at rather than one to correct",
 				plugin.ID, installedVersion, plugin.Version))
 		}
 	}
