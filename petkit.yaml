@@ -23,8 +23,8 @@ items:
     source: skills/todo-checklist
     target: ~/.claude/skills/todo-checklist
     note: |
-      Personal. Writes .todo files in Todo+ format; gardener's
-      docs/todo/multi-garden-deferred.todo is one of its outputs.
+      Personal. Writes checklists as .todo files in Todo+ format — smoke tests,
+      release sign-offs, QA sheets — rather than printing them to a console.
 
 # ── What is deliberately NOT here ────────────────────────────────────────────
 #

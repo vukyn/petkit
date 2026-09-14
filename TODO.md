@@ -55,6 +55,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `SETT-001` | done | The settings fragment and its merge |
 | `SETT-002` | open | Nothing notices when a machine's `settings.json` drifts from the fragment |
 | `PLUG-001` | done | The plugin list and `plugins plan` |
+| `PLUG-004` | open | `settings/plugins.json` was reduced by hand and nothing reproduces it — the obvious rebuild copies `installed_plugins.json`, whose `projectPath` is an absolute path into an employer's repository |
 | `PLUG-002` | open | Two machines can end up on different plugin versions and the manifest cannot say otherwise |
 | `CLI-001` | done | The command surface and the version rule |
 | `CLI-002` | open | `go install` works (with `GOPRIVATE`), but a binary with no clone can only answer `version` — measured; what is left is whether `check` should reach the tags API |
@@ -141,6 +142,28 @@ defect fixed in `internal/link` is still `SETT`.
       ⚠️ Do not "fix" this by pinning without checking that `claude plugin install`
       accepts a version at all — if it does not, the honest close is to relabel the
       field as *last seen* and stop implying it is a target.
+
+- [ ] `PLUG-004` ⚠️ **`settings/plugins.json` was reduced by hand, and the obvious
+      way to rebuild it leaks a path.** Raised 2026-09-14, out of the question of
+      whether this repository can be made public.
+
+      **What is wrong.** The file records `{id, scope, version}` per plugin. Its
+      source, `~/.claude/plugins/installed_plugins.json`, records more — every
+      project-scoped entry carries a `projectPath`, an absolute path into the
+      repository the plugin was installed for. On this machine one of them points
+      at an employer's project. The current file is clean **because it was reduced
+      by hand**, and nothing in the repository performs or enforces that reduction.
+
+      ⚠️ **This matters whether or not the repository is public.** A private
+      repository is still shared with whoever is added to it, and a path is the
+      kind of thing that is copied into an issue or a screenshot without thought.
+
+      **What closing it needs.** A `petkit plugins capture` that reads the live
+      files, writes exactly the three fields, and refuses to write anything it does
+      not recognise — plus a test that feeds it an `installed_plugins.json`
+      containing a `projectPath` and asserts the output does not contain it.
+      ⚠️ The test is the point. A capture command whose reduction is only asserted
+      by reading the code is the same hand-reduction with more steps.
 
 - [ ] `CLI-002` **`check` needs a clone, and so does everything except
       `version`.** Raised 2026-09-14 with the first version, **measured the same
