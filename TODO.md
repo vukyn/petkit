@@ -68,7 +68,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-005` | done | `petkit setup` clones the repository this binary was built from, records it, and reports what `sync` would do — install, one command, done |
 | `CLI-006` | done | `CLAUDE_CONFIG_DIR` is honoured — petkit hard-coded `~/.claude`, so a machine that sets it was having everything installed where nothing reads it. Wrong on every OS, not only Windows |
 | `CLI-007` | done | A missing git said `executable file not found in %PATH%`; it now names git and says what needs it |
-| `CLI-002` | open | The not-found sentence now names all three ways out, `petkit setup` included. What is left is one question: should `check` answer "is there a newer tag" from the GitHub tags API with no clone at all |
+| `CLI-002` | done | Twice the premise moved and twice the answer was smaller than the title: `CLI-005` gave a binary its own clone, and what was actually wrong was one sentence pointing a new machine at `petkit init`. The tags-API half is refused as `CLI-013` |
 | `CLI-010` | done | The resolution was invisible: `status`, `sync`, `doctor` and `check` now open with which repository they resolved and how, and say both when the walked-up one is not the one `init` recorded |
 | `CLI-011` | open | Every CLI test asserts with `strings.Contains` over the whole buffer, so a brand-new first line was invisible to all of them and a line going missing would be too |
 | `CLI-012` | open | `make check` could not pass on Windows. The line endings are fixed — `.gitattributes` pins LF and `gofmt` is clean — but four tests still inject a platform while `path/filepath` and NTFS answer for the host |
@@ -78,6 +78,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-008` | refused | Moving the config file to `os.UserConfigDir()` — it stays at `.config/petkit/config.json` on every OS |
 | `PLUG-003` | refused | Installing plugins ourselves instead of printing `claude plugin` commands |
 | `MFST-003` | refused | Tracking another repository's agents, commands and scripts |
+| `CLI-013` | refused | `check` answering "is there a newer tag" from the GitHub tags API with no clone — four failure modes bought for a question `petkit setup` disposes of in one command |
 
 ## Done
 
@@ -195,54 +196,6 @@ defect fixed in `internal/link` is still `SETT`.
       pretending to be a field. ⚠️ A field that is parsed and ignored is worse than
       no field: the next person adds `kind: script` and reasonably expects it to
       change something.
-
-- [ ] `CLI-002` **`check` still needs a clone.** Raised 2026-09-14 with the first
-      version, **measured the same day**; the premise moved under it when
-      `CLI-005` shipped.
-
-      `go install github.com/vukyn/petkit/cmd/petkit@latest` works — measured
-      against a clean module cache with no `GOPRIVATE` and no credentials, both
-      `@latest` and `@v0.1.0` install and the binary reports `petkit v0.1.0`.
-
-      **What `CLI-005` took off this entry.** "The binary cannot get itself a
-      clone" is no longer true: `petkit setup` clones and records in one command,
-      and `check` answers normally from that moment on — measured end to end, a
-      fresh binary against a disposable `HOME` reports `checkout on v0.2.0` a
-      second after setup returns. The install story is closed; this entry is not.
-
-      **Half of what was left is gone (2026-09-16).** `check`, `sync`, `status`
-      and `doctor` on a machine with no repository *and* no setup used to get a
-      sentence naming `petkit init` alone — the answer for a machine that already
-      has a clone. ⚠️ **The first thing a brand-new machine read was the one
-      instruction that did not apply to it.** It now reads:
-
-      ```
-      petkit: cannot find the petkit repository: no petkit.yaml above /tmp,
-      PETKIT_HOME is not set, and nothing is recorded in
-      ~/.config/petkit/config.json — run `petkit setup` if this machine has no
-      clone yet, `petkit init /path/to/petkit` once if it has one, or run petkit
-      from inside the repository
-      ```
-
-      Three ways out, each saying which machine it is for. Mutation: dropping
-      `petkit setup` from the sentence turns
-      `TestTheMissingRepositoryErrorNamesEveryWayOut` red. `README.md` quotes the
-      new sentence and no longer needs the paragraph that explained what the
-      message would not say.
-
-      **What is left is one question, and it is the one the entry was raised on.**
-      Should `check` answer "is there a newer tag" **without** a clone, from the
-      GitHub tags API? A binary knows its own version (`debug.BuildInfo`), so
-      "am I behind?" is answerable with no repository at all — and it is the one
-      question a machine can sensibly ask before it has cloned anything. `CLI-005`
-      did not answer it, because setup's answer is "clone first".
-
-      ⚠️ **It is a real trade, not a chore.** It would put a network call, a
-      GitHub dependency, an offline path and a rate limit into a tool whose whole
-      design is local, small and dependency-shy — for a question `petkit setup`
-      makes moot in one command. **Closing this entry means deciding that the
-      message is the whole answer**, and that decision belongs in
-      § *Decided against* with its reasoning, not in a quiet tick.
 
 - [ ] `CLI-011` ⚠️ **Every CLI test asserts by searching the whole buffer, so
       the suite cannot see a line arrive or leave.** Raised 2026-09-14 out of
@@ -493,3 +446,21 @@ defect fixed in `internal/link` is still `SETT`.
   Makefile — and arrives on every machine with `git clone`. A copy here would be a
   second version of a tracked file with no reader. ⚠️ Re-raise only for a piece
   that stops being repository-scoped.
+
+- `CLI-013` **`check` answering "is there a newer tag" from the GitHub tags API,
+  with no clone.** Considered on 2026-09-16 out of `CLI-002`, and rejected on what
+  it costs against what it buys. The idea is sound, which is why it stayed open
+  for two days: a binary knows its own version (`debug.BuildInfo`), so "am I
+  behind?" is genuinely answerable with no repository at all, and it is the one
+  question a machine can ask before it has cloned anything. ⚠️ **What decides it
+  is the other side of the ledger.** It puts a network call, a GitHub dependency,
+  an offline path and a rate limit into a tool that has none of those and is
+  deliberately local, small and dependency-shy — four new failure modes, each
+  owing a message and a test — to answer a question `petkit setup` disposes of in
+  one command, by producing the clone that makes `check` work properly rather
+  than approximately. ⚠️ **Re-raise only for a machine that must know it is
+  behind and may not clone**: a locked-down image, or a CI job that installs the
+  binary alone. And then as a **second command** (`petkit latest`), never as a
+  fallback inside `check` — a `check` that answers from a different source
+  depending on whether a directory happens to exist is two commands wearing one
+  name, and the reader cannot tell which one answered.
