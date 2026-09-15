@@ -115,3 +115,65 @@ func TestCurrentIsTheRealPlatform(t *testing.T) {
 		t.Errorf("Current() = %q, want %q", ospath.Current(), runtime.GOOS)
 	}
 }
+
+// MFST-006. The defect: validateSource asked path/filepath, which is compiled
+// for the host, so `/x` was absolute on macOS and not on Windows and the same
+// manifest was refused on one machine and accepted on the other.
+//
+// ⚠️ Both answers are asserted here, on whichever machine runs the test. That
+// is the point: neither spelling may depend on who is asking.
+func TestIsAbsAnswersForThePlatformItIsGiven(t *testing.T) {
+	cases := []struct {
+		path    string
+		windows bool
+		unix    bool
+	}{
+		{path: "skills/writing-todo"},
+		{path: "./skills/x"},
+		{path: "../outside/x"},
+		{path: "/etc/skills/x", unix: true},
+		{path: "/", unix: true},
+		{path: `C:\skills\x`, windows: true},
+		{path: "C:/skills/x", windows: true},
+		{path: "c:/skills/x", windows: true},
+		{path: `\\server\share\x`, windows: true},
+		{path: `\skills\x`},
+		{path: "C:skills/x"},
+	}
+	for _, c := range cases {
+		if got := ospath.IsAbs(c.path, ospath.Windows); got != c.windows {
+			t.Errorf("IsAbs(%q, windows) = %v, want %v", c.path, got, c.windows)
+		}
+		if got := ospath.IsAbs(c.path, unix); got != c.unix {
+			t.Errorf("IsAbs(%q, %s) = %v, want %v", c.path, unix, got, c.unix)
+		}
+	}
+}
+
+// The positive case the refusal owes: a path that is absolute nowhere is
+// absolute nowhere, whichever platform is asked.
+func TestARelativePathIsAbsoluteOnNoPlatform(t *testing.T) {
+	for _, path := range []string{"skills/x", "skills", "x/y/z", ".", ""} {
+		if ospath.IsAbs(path, ospath.Windows) || ospath.IsAbs(path, unix) {
+			t.Errorf("%q was called absolute", path)
+		}
+	}
+}
+
+// IsAbsAnywhere is the question a rule that travels has to ask, and it is a
+// question about the manifest rather than about this machine: a path absolute
+// on *either* platform is refused on *both*, so the same petkit.yaml is read
+// the same way everywhere.
+func TestIsAbsAnywhereAsksBothPlatformsAtOnce(t *testing.T) {
+	for _, path := range []string{"/etc/skills/x", "C:/skills/x", `C:\skills\x`, `\\server\share\x`} {
+		if !ospath.IsAbsAnywhere(path) {
+			t.Errorf("%q is absolute on one platform and IsAbsAnywhere said no", path)
+		}
+	}
+	// The positive case: a manifest's own spelling stays acceptable.
+	for _, path := range []string{"skills/writing-todo", "skills/nested/../x", ""} {
+		if ospath.IsAbsAnywhere(path) {
+			t.Errorf("%q is relative everywhere and IsAbsAnywhere said yes", path)
+		}
+	}
+}

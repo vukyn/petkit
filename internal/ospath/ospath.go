@@ -130,3 +130,52 @@ func separators(goos string) string {
 	}
 	return "/"
 }
+
+// IsAbs reports whether path is absolute on goos.
+//
+// ⚠️ This is path/filepath's question with the platform as a parameter, and
+// MFST-006 is why it had to become one. filepath.IsAbs is compiled for the
+// host, and the two platforms disagree in **both** directions: `/x` is absolute
+// on Unix and not on Windows, `C:/x` is absolute on Windows and not on Unix. A
+// manifest rule asked of the host is a rule that answers differently per
+// machine, which is the one thing petkit.yaml may not do.
+//
+// Windows counts two shapes as absolute, and `\x` is deliberately not one of
+// them: it is rooted on the current drive rather than absolute, and filepath
+// agrees.
+func IsAbs(path, goos string) bool {
+	if goos != Windows {
+		return strings.HasPrefix(path, "/")
+	}
+	separator := func(index int) bool {
+		return index < len(path) && strings.IndexByte(separators(goos), path[index]) >= 0
+	}
+	switch {
+	case separator(0) && separator(1): // \\server\share
+		return true
+	case len(path) >= 3 && path[1] == ':' && separator(2): // C:\x
+		return isDriveLetter(path[0])
+	}
+	return false
+}
+
+// IsAbsAnywhere reports whether path is absolute on any platform petkit runs
+// on, and it is the form a rule about a **manifest** wants rather than IsAbs.
+//
+// ⚠️ A manifest travels: the same petkit.yaml is read on a Mac and on a Windows
+// machine, so a path absolute on either has to be refused on both. Asking only
+// the host is how MFST-006 happened — and MFST-005, the backslash refusal, is
+// the same argument reached a day earlier from the other end.
+func IsAbsAnywhere(path string) bool {
+	return IsAbs(path, Windows) || IsAbs(path, anyUnix)
+}
+
+// anyUnix is a platform that is not Windows. Which one does not matter: this
+// package treats every non-Windows platform alike, and naming one keeps
+// IsAbsAnywhere from having to read runtime.GOOS.
+const anyUnix = "linux"
+
+// isDriveLetter reports whether b can name a Windows drive.
+func isDriveLetter(b byte) bool {
+	return ('a' <= b && b <= 'z') || ('A' <= b && b <= 'Z')
+}

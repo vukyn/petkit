@@ -152,7 +152,11 @@ func validateSource(label, source, root string) []string {
 	switch {
 	case source == "":
 		return []string{fmt.Sprintf("item %q: source is empty; name a path inside the repository", label)}
-	case filepath.IsAbs(source):
+	// ⚠️ ospath.IsAbsAnywhere, not filepath.IsAbs. filepath is compiled for the
+	// host and the two platforms disagree in both directions, so the host's
+	// answer made the same manifest legal on one machine and illegal on the
+	// other — MFST-006. The rule has to be the manifest's, not the machine's.
+	case ospath.IsAbsAnywhere(source):
 		return []string{fmt.Sprintf(
 			"item %q: source %q is absolute; sources are relative to the repository root", label, source)}
 	case strings.Contains(source, `\`):
