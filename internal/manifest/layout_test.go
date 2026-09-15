@@ -24,16 +24,17 @@ func windowsMachine() manifest.Layout {
 // the separators in it have to become backslashes, or the path names a file
 // called `skills/writing-todo` instead of a file inside a directory.
 //
-// ⚠️ The expectation joins the root to a remainder spelled with a BACKSLASH, so
-// it is right on both hosts: this machine's filepath.Join contributes its own
-// separator between the two and Windows' contributes its own, and either way the
-// remainder that came out of the manifest has been converted. Dropping the
-// conversion leaves a "/" in the remainder and the comparison fails here.
+// ⚠️ The expectation is a plain literal, and it did not used to be. It was
+// filepath.Join of the root and a backslashed remainder, which was host-tolerant
+// by being wrong: on Linux that produced `C:\Users\me\.claude/skills\writing-todo`
+// — a separator from each platform, an answer no Windows machine would ever give
+// — and the test asserted it. The technique was only half applied, so the
+// "Windows answer" computed off Windows was a hybrid. CLI-012.
 func TestAManifestTargetResolvesUnderAWindowsRoot(t *testing.T) {
 	layout := windowsMachine()
 
 	got := layout.Resolve("~/.claude/skills/writing-todo")
-	want := filepath.Join(`C:\Users\me\.claude`, `skills\writing-todo`)
+	want := `C:\Users\me\.claude\skills\writing-todo`
 	if got != want {
 		t.Errorf("Resolve under a Windows root = %q, want %q", got, want)
 	}
@@ -57,7 +58,7 @@ func TestASourceResolvesUnderAWindowsRoot(t *testing.T) {
 	item := manifest.Item{ID: "skill/writing-todo", Source: "skills/writing-todo"}
 
 	got := item.SourcePath(`C:\Users\me\.petkit`, ospath.Windows)
-	want := filepath.Join(`C:\Users\me\.petkit`, `skills\writing-todo`)
+	want := `C:\Users\me\.petkit\skills\writing-todo`
 	if got != want {
 		t.Errorf("SourcePath under a Windows root = %q, want %q", got, want)
 	}
