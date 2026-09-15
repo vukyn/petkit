@@ -51,9 +51,11 @@ defect fixed in `internal/link` is still `SETT`.
 | `LINK-002` | open | A real directory where a link should go can only be refused — there is no way to adopt one |
 | `LINK-004` | done | Windows refuses `os.Symlink` without Developer Mode or elevation; the errno is now translated into a message naming the cause and both ways out — and never into a copy |
 | `LINK-005` | done | `status` called a good link `stale` on Windows, so `sync` removed and recreated it every run: path comparison now folds case on Windows only |
+| `LINK-006` | open | A source that is missing when `sync` runs yields a Windows **file**-flavour symlink to a directory: it keeps working for a direct read, but a directory scan cannot see it, `doctor` calls it broken forever and `sync` never repairs it |
 | `MFST-001` | done | The manifest and its validation |
 | `MFST-004` | done | `~/` is a prefix, not a fence — `~/../elsewhere` passed validation and only `doctor` objected, after `sync` had already made the link. Moved into `validateTarget`; doctor's branch deleted as unreachable |
 | `MFST-005` | done | A backslash in a target or source escaped the home directory on Windows and passed validation on macOS; refused everywhere, and the `/`→separator conversion is now explicit and watchable from here |
+| `MFST-006` | open | The absolute-source refusal is `filepath.IsAbs`, so `/x` as a source is refused on macOS and accepted on Windows — `MFST-005`'s machine-specific manifest, from the other end |
 | `MFST-002` | open | `kind:` is decorative — nothing behaves differently per kind, so it is either a rule or a comment |
 | `SETT-001` | done | The settings fragment and its merge |
 | `SETT-002` | done | Nothing noticed settings drift until it was asked: `status` now carries one line saying whether the live file is in step with the fragment, drifted (and in how many keys), or absent |
@@ -69,7 +71,8 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-002` | open | A binary can now clone itself a repository, but `check` still fails without one — what is left is whether it should answer from the tags API instead |
 | `CLI-010` | done | The resolution was invisible: `status`, `sync`, `doctor` and `check` now open with which repository they resolved and how, and say both when the walked-up one is not the one `init` recorded |
 | `CLI-011` | open | Every CLI test asserts with `strings.Contains` over the whole buffer, so a brand-new first line was invisible to all of them and a line going missing would be too |
-| `CLI-009` | open | Nothing has ever run on Windows — the port is compile-checked and unit-checked from macOS, and the machine itself is unmeasured |
+| `CLI-012` | open | `make check` cannot pass on Windows: 26 files fail `gofmt` on a CRLF checkout (no `.gitattributes`), and four tests inject a platform while `path/filepath` and NTFS answer for the host |
+| `CLI-009` | done | Run on a real Windows 11 machine at last. Every behaviour the port claimed held — an idempotent second `sync` above all — and the run found three things nothing on macOS could: `LINK-006`, `MFST-006` and `CLI-012` |
 | `DOC-001` | done | The fourteen stale copies were not shadowing anything — the plugin was installed project-scoped to another project and did not load here at all. Installed at user scope, the thirteen copies backed up and removed |
 | `LINK-003` | refused | Installing by copy instead of by symlink |
 | `CLI-008` | refused | Moving the config file to `os.UserConfigDir()` — it stays at `.config/petkit/config.json` on every OS |
@@ -156,8 +159,14 @@ defect fixed in `internal/link` is still `SETT`.
   missing `git` is named. ⚠️ **No `//go:build windows` file was added.** The
   platform is a parameter — `manifest.Layout.GOOS`, and every function in the new
   `internal/ospath` — so a macOS test runs the Windows branch in the same
-  process. ⚠️ It is compile-checked (`GOOS=windows` build and vet) and
-  unit-checked; **nothing has run on Windows** — that is `CLI-009`.
+  process. ⚠️ It shipped compile-checked (`GOOS=windows` build and vet) and
+  unit-checked **only**; it has since been run on a real Windows 11 machine
+  (`CLI-009`) and every sentence above held, including the one that matters —
+  a second `sync` says `nothing to do`. ⚠️ What the run found was three things
+  no test on macOS could reach: `LINK-006` (a source missing at `sync` time
+  makes a file-flavour symlink nothing repairs), `MFST-006` (`filepath.IsAbs`
+  refuses `/x` as a source on macOS and accepts it on Windows) and `CLI-012`
+  (**`make check` is red on Windows**, so the gate has never spoken there).
 
 ## Not done
 
@@ -259,65 +268,184 @@ defect fixed in `internal/link` is still `SETT`.
       interface (`CLI-003`). The line to hold is: **the shape is asserted, the
       wording is sampled.**
 
-- [ ] `CLI-009` ⚠️ **Nothing has ever run on Windows.** Raised 2026-09-14 with
-      the port that made the code correct there.
+- [ ] `LINK-006` ⚠️ **A source that is missing when `sync` runs leaves a Windows
+      *file*-flavour symlink pointing at a directory, nothing ever repairs it,
+      and the skill then disappears from every consumer that scans the
+      directory.** Raised 2026-09-15 by the Windows run (`CLI-009`), which
+      predicted the shape and then reproduced it.
 
-      **What is measured.** `GOOS=windows GOARCH=amd64 go build ./...` and
-      `GOOS=windows go vet ./...` are clean, and every Windows branch has a unit
-      test that runs on macOS with the platform passed in as a parameter. That is
-      the whole of the evidence. **Compiling is not running**, and no line of
-      this has touched a Windows filesystem, a Windows `%USERPROFILE%`, a Windows
-      `git`, or a real `ERROR_PRIVILEGE_NOT_HELD`.
+      **What is wrong.** Go's `os.Symlink` on Windows picks the file flavour or
+      the directory flavour by looking at the destination. A source that is not
+      there yet is not a directory, so the link is created with
+      `FILE_ATTRIBUTE_ARCHIVE` where a good one gets `FILE_ATTRIBUTE_DIRECTORY`.
+      ⚠️ Unix does not reproduce it at all — a Unix symlink has no flavour — and
+      `sync` does not refuse a missing source: it exits 0 and makes the link.
 
-      **What to run, in the order the risk runs.** ⚠️ Do this in a shell with
-      Developer Mode **off** first — the interesting failure is the one that does
-      not happen on a developer's own box.
+      **The evidence.** A throwaway repository with two items, one source present
+      and one absent, synced on Windows 11 Pro 26200 with `CLAUDE_CONFIG_DIR`
+      pointed at a scratch directory:
 
-      1. `go install github.com/vukyn/petkit/cmd/petkit@latest`, then
-         `petkit setup`. This is the first thing a new machine does and the first
-         thing that runs `git`. If git is missing you should get the sentence
-         naming git, not `executable file not found in %PATH%`.
-      2. `petkit sync` **without** Developer Mode. Expect the
-         `ERROR_PRIVILEGE_NOT_HELD` message naming Developer Mode and
-         Administrator. ⚠️ If it instead reports `conflict`, or succeeds, the
-         errno did not arrive in the shape the translation expects — dump
-         `%+v` of the raw error before changing anything.
-      3. Turn Developer Mode on, `petkit sync`, then **`petkit sync` again**.
-         The second run must print `ok` for every item and `nothing to do`. ⚠️
-         **This is the single most important line to look at.** If it prints
-         `repoint`, the case/separator comparison is still wrong and petkit is
-         deleting and recreating a good symlink on every run.
-      4. `petkit status` and `petkit doctor`. Targets should print as
-         `~/.claude/skills/x` with forward slashes; doctor must not list an item
-         petkit itself installed as "not in the manifest".
-      5. `set CLAUDE_CONFIG_DIR=%USERPROFILE%\somewhere-else` and repeat 3 and 4.
-      6. `petkit check` in the clone.
+      | item | source when `sync` ran | attributes after | flavour |
+      | --- | --- | --- | --- |
+      | `skill/present` | present | `Directory, ReparsePoint` | directory — right |
+      | `skill/absent` | absent | `Archive, ReparsePoint` | **file** — wrong |
 
-      **Two things known to be unmeasurable from macOS, so look at them first.**
+      The missing source was then created and everything re-run:
 
-      - ⚠️ **`doctor`'s survey under a Windows layout.** The decision
-        underneath it — does this directory entry belong to an item? — is tested
-        directly in `doctor_internal_test.go`, because a Windows layout resolved
-        on a macOS filesystem produces paths this filesystem cannot hold in the
-        shape Windows would (the remainder's separator becomes a backslash, and
-        `~/.claude/skills` is then not that file's parent). The **wiring** from
-        `os.ReadDir` into that decision is therefore unexercised. Step 4 above is
-        the test.
-      - ⚠️ **A missing source makes a broken link, not a refused one.** Go's
-        `os.Symlink` on Windows picks the file flavour or the directory flavour
-        of a symlink by looking at the destination, so a source that is not there
-        yet yields a *file* symlink pointing at a directory — broken in a way
-        Unix does not reproduce, because Unix symlinks have no flavour. `doctor`
-        reports a missing source; `sync` does not refuse one. Reproduce by
-        removing a source directory and running `sync`.
+      | command | says | true? |
+      | --- | --- | --- |
+      | `petkit sync` | `ok`, `nothing to do; every item is already linked` | nothing was repaired |
+      | `petkit status` | `linked` | — |
+      | `petkit doctor` | `is a broken symlink: it points at …, which does not exist` | **no** — it exists; and doctor exits 0, so this stays a note run after run |
 
-      **One defect deliberately left open.** Two items claiming `~/x` and `~/X`
-      are one target on Windows and two everywhere else. Validation does **not**
-      fold case, because a manifest valid on macOS and invalid on Windows is the
-      machine-specific `petkit.yaml` the whole design refuses. On Windows those
-      two items will fight over one path, run after run. If it ever happens, the
-      answer is a refusal in `validateTarget` that is case-insensitive on every
-      platform — not one that consults `GOOS`.
+      ⚠️ **`doctor`'s sentence is false, and one missing check is why.**
+      `brokenSymlink` in `internal/link/doctor.go` reasons that "a symlink that
+      Lstats but does not Stat is exactly this case". On Windows the `os.Stat`
+      of a file-flavour link to a directory fails with **`Access is denied.`**,
+      and `os.IsNotExist(err)` is **`false`** — so a permission error is
+      reported as a missing destination.
+
+      **What it costs, measured against the real consumer.** Reading a known path
+      *through* the link works; **scanning the directory does not**:
+
+      | runtime | call | result |
+      | --- | --- | --- |
+      | Go | `os.Stat(link)` | `Access is denied.`; `os.IsNotExist` = `false` |
+      | Go | `os.ReadDir(link)` | `Access is denied.` |
+      | Node | `fs.statSync(link).isDirectory()` | `EPERM: operation not permitted, stat` |
+      | Node | `fs.readdirSync(link)` | `EPERM: operation not permitted, scandir` |
+      | Node | `fs.readFileSync(link + '/SKILL.md')` | succeeds |
+      | PowerShell | `Test-Path -PathType Container` / `-PathType Leaf` | `False` / `True` |
+      | PowerShell | `Get-ChildItem`, `Get-Content` | both succeed |
+
+      ⚠️ **Claude Code discovers skills by scanning, and Node cannot scan this
+      link.** The failure is therefore not cosmetic: the skill is silently absent
+      from the one thing petkit exists to configure, while `petkit status` says
+      `linked` and `petkit sync` says `nothing to do`.
+
+      ⚠️ **This is not `LINK-002`.** That one is a **real** directory where a
+      link should go, which `sync` refuses and leaves alone. This is a link
+      petkit itself created and calls `ok`.
+
+      **Three places could own it; deciding which is the work.**
+      1. `doctor` stops reporting every Stat failure as "does not exist". ⚠️ The
+         only one that merely stops a false sentence — no behaviour changes and
+         nothing needs deciding.
+      2. `sync` refuses an item whose source is not there. Widens what `sync`
+         **refuses**, which is not what `CLAUDE.md` § *The rule the whole tool
+         rests on* guards — read it anyway before touching the neighbours.
+      3. `status` / `sync` call a wrong-flavour link `stale` and repoint it. ⚠️
+         **This widens what `sync` may DELETE**, to "a symlink whose flavour
+         disagrees with its destination". It therefore owes a test proving a real
+         file and a real directory are still refused, and a line here saying why
+         the rule moved.
+
+      ⚠️ **Reproduce on Windows, not in a unit test.** Every test here passes the
+      platform in as a parameter, and **this defect is invisible to that
+      technique**: the flavour is chosen by the Windows kernel, not by any branch
+      petkit owns. A test on another OS cannot observe it.
+
+      → `internal/link/doctor.go` (`brokenSymlink`), `internal/link/link.go`,
+      `docs/decisions.md` § `CLI-009`.
+
+- [ ] `MFST-006` ⚠️ **The absolute-source refusal is `filepath.IsAbs`, so a
+      source spelled `/x` is refused on macOS and accepted on Windows — the
+      machine-specific manifest `MFST-005` was raised to prevent, in the other
+      direction.** Raised 2026-09-15 by the Windows run (`CLI-009`), which ran
+      the suite on Windows for the first time and turned this test red.
+
+      **What is wrong.** `validateSource` in `internal/manifest/manifest.go`
+      reads `case filepath.IsAbs(source):`. `path/filepath` is bound to `GOOS`
+      at compile time: `filepath.IsAbs("/also-absolute")` is **`true`** on macOS
+      and **`false`** on Windows, where absolute means a drive letter or a UNC
+      path. On Windows the guard does not fire, `filepath.Clean` turns the value
+      into `\also-absolute`, the `..` check has nothing to object to, and the
+      item is **accepted**.
+
+      **The evidence.** `go test ./... -count=1` on Windows 11 Pro 26200:
+
+      | test | says | why |
+      | --- | --- | --- |
+      | `TestAnAbsoluteSourceIsRefused` | `an absolute source was accepted` | the guard did not fire |
+      | `TestAllProblemsAreReportedTogether` | `reported 2 problems, want 3` | the same item, counted once fewer |
+
+      Both pass on macOS. ⚠️ **The suite was never the thing that caught this** —
+      it was written correctly and ran only where the bug is absent.
+
+      ⚠️ **The harm is not an escape; it is the manifest becoming
+      machine-specific.** `filepath.Join(root, "/also-absolute")` resolves to
+      `root\also-absolute`, still inside the repository, so nothing reaches a
+      file it should not. What breaks is the property `petkit.yaml` exists to
+      have: the same file is valid on one machine and refused on another, which
+      is exactly what `MFST-005` refused a backslash for. **The two are the same
+      rule seen from opposite ends** — one spelling Windows accepts and macOS
+      does not, one spelling macOS accepts and Windows does not.
+
+      **What it wants.** A refusal that does not consult the host: a leading `/`
+      is refused for a source on **every** platform, the way `backslashProblem`
+      already refuses `\` on every platform — with the same comment saying the
+      manifest travels. ⚠️ And ask the same question of every other
+      `filepath.IsAbs` and `filepath.Clean` in validation before closing: this
+      one was found because a test happened to cover it.
+
+      → `internal/manifest/manifest.go` (`validateSource`, beside
+      `backslashProblem`), `TestAnAbsoluteSourceIsRefused`.
+
+- [ ] `CLI-012` ⚠️ **`make check` cannot pass on Windows, for two reasons that
+      have nothing to do with each other — and it has never been run there until
+      now.** Raised 2026-09-15 by the Windows run (`CLI-009`).
+
+      **Reason one: gofmt fails on all 26 Go files, and the only difference is
+      `\r`.** The repository carries no `.gitattributes`, so a checkout on a
+      machine with `core.autocrlf=true` — the Git for Windows default — writes
+      every file CRLF. `gofmt` normalises to LF and therefore reports every file
+      as unformatted. `gofmt -d internal/version/version.go` is 134 changed
+      lines and **every one of them differs only by a trailing `\r`**. ⚠️ The
+      gate is not wrong here; the checkout is. Running `make fmt` would rewrite
+      all 26 files to LF and hand the owner a 26-file diff on a clean tree.
+
+      **Reason two: six tests fail, and four of them fail because the platform
+      is a parameter but `path/filepath` is not.**
+
+      | test | says |
+      | --- | --- |
+      | `TestTildeIsTheOnlyTemplating` | `ExpandTilde("~") = "\tmp\home", want "/tmp/home"` |
+      | `TestDisplayIsTheInverseOfExpansion` | `a path outside the home directory was collapsed to "\elsewhere\x"` |
+      | `TestDisplayDoesNotFoldCaseOffWindows` | `a differently-cased Unix path was collapsed to "\home\ME\.claude\x"` |
+      | `TestEverywhereElseALinkThatDiffersOnlyInCaseIsStale` | `status off Windows = "linked", want "stale"` |
+
+      ⚠️ **This is the cost of the technique `CLI-009`'s port was built on, and
+      it is worth stating plainly.** Passing the platform in as a parameter
+      (`manifest.Layout.GOOS`, `internal/ospath`) makes a Windows branch runnable
+      on macOS, and it was right to do. But `path/filepath` binds to `GOOS` at
+      **compile** time and the host filesystem has its own opinion about case,
+      so a test that injects "not Windows" while running on Windows is asking
+      two authorities that disagree. The first three fail on the separator; the
+      fourth fails because NTFS resolved a differently-cased path the injected
+      platform was told to treat as a different file.
+
+      ⚠️ **The other two failures are not this.** `TestAnAbsoluteSourceIsRefused`
+      and `TestAllProblemsAreReportedTogether` are `MFST-006`, a real defect in
+      the product. Do not fix them here, and do not fix them by loosening the
+      assertion.
+
+      **What has to be decided, and it is a design question.** Either the
+      cross-platform tests build their fixture paths through the injected
+      platform instead of writing Unix literals — which means `ExpandTilde` and
+      friends stop calling `filepath` directly and take the separator from
+      `ospath` too — or those four tests are marked as running on one OS only,
+      which gives up the property the technique was adopted for. ⚠️ **The second
+      option is cheaper and worse**: it would leave the Windows branches
+      unexercised on Windows, which is the state `CLI-009` existed to end.
+
+      **Why it is a sweep and not a step.** Nothing may claim "`make check` is
+      green" on Windows until both halves land, and the `.gitattributes` half
+      rewrites every Go file in the tree — so it wants its own commit, before
+      anything else touches them.
+
+      → `.gitattributes` (absent), `Makefile` § `check`,
+      `internal/manifest/manifest.go` (`ExpandTilde`), `internal/ospath`,
+      `internal/link/windows_test.go`, `internal/manifest/layout_test.go`.
 
 ## Decided against — do not re-raise
 
