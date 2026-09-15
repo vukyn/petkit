@@ -903,6 +903,18 @@ the way it is. The entries carry the same `AREA-NNN` codes.
       platforms, the way `MFST-006`'s test does. Mutations: making `Clean` ignore
       its `goos` turns 12 tests red, and `Join` 10.
 
+      ⚠️ **CI found something better than a test failure: two tests had been
+      pinning a path no Windows machine would ever produce.**
+      `TestAManifestTargetResolvesUnderAWindowsRoot` asserted
+      `filepath.Join(root, "skills\writing-todo")`, which was host-tolerant by
+      being wrong: on Linux it evaluated to
+      `C:\Users\me\.claude/skills\writing-todo` — one separator from each
+      platform. The comment above it explained the compromise in good faith; the
+      compromise was the defect. With `ospath.Join` the expectation is a plain
+      literal both hosts compute identically. **The half-applied technique did
+      not merely fail on Windows: it produced a wrong Windows answer everywhere
+      else, and a test wrote it down.**
+
       ⚠️ **The fourth test was never reason two, and finding that out is the
       result worth keeping.** `TestEverywhereElseALinkThatDiffersOnlyInCaseIsStale`
       failed because `samePath` falls back to `filepath.EvalSymlinks`, which asks
