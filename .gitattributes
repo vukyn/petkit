@@ -1,0 +1,12 @@
+# petkit's sources are LF in the working tree on every platform.
+#
+# ⚠️ Without this line a checkout on a machine with core.autocrlf=true — the
+# Git for Windows default — writes every file CRLF, gofmt normalises to LF and
+# therefore reports all 26 Go files as unformatted, and `make check` cannot
+# pass on Windows at all. Measured 2026-09-15 (CLI-012): `gofmt -d` on one file
+# was 134 changed lines, every one of them differing only by a trailing \r.
+#
+# ⚠️ Changing this re-writes the line endings of every tracked file. Do it in a
+# commit of its own, the way this one was.
+
+* text=auto eol=lf
