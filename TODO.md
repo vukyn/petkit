@@ -71,7 +71,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-002` | done | Twice the premise moved and twice the answer was smaller than the title: `CLI-005` gave a binary its own clone, and what was actually wrong was one sentence pointing a new machine at `petkit init`. The tags-API half is refused as `CLI-013` |
 | `CLI-010` | done | The resolution was invisible: `status`, `sync`, `doctor` and `check` now open with which repository they resolved and how, and say both when the walked-up one is not the one `init` recorded |
 | `CLI-011` | done | The suite protected the words and not the shape: four lines were deleted from production one at a time and two of them were invisible to all 141 tests. One helper, one table, nine command shapes -- each line in order, count asserted, wording still sampled |
-| `CLI-014` | open | `sync --dry-run` prints no closing line when it has something to do and does print one when it has nothing to do -- a command whose whole purpose is "what would happen" ends by not saying nothing happened |
+| `CLI-014` | done | `sync --dry-run` printed no closing line when it had something to do and one when it had nothing to do: it now closes with "N change(s) would be made; nothing was changed", and two tests that used `Contains("change(s)")` as a proxy now assert the last line they meant |
 | `CLI-012` | done | `make check` could not pass on Windows and now exits 0 there: `.gitattributes` pins LF, `ospath.Clean`/`Join` take the platform as an argument so three fixtures can ask both, and the fourth test skips on a measured case-folding filesystem — a question no volume that folds case can be asked |
 | `CLI-009` | done | Run on a real Windows 11 machine at last. Every behaviour the port claimed held — an idempotent second `sync` above all — and the run found three things nothing on macOS could: `LINK-006`, `MFST-006` and `CLI-012` |
 | `DOC-001` | done | The fourteen stale copies were not shadowing anything — the plugin was installed project-scoped to another project and did not load here at all. Installed at user scope, the thirteen copies backed up and removed |
@@ -305,46 +305,6 @@ defect fixed in `internal/link` is still `SETT`.
 
       → `internal/link/doctor.go` (`followSymlink`, done), `internal/link/link.go`
       (`sync`'s side, open), `docs/decisions.md` § `CLI-009`.
-
-- [ ] `CLI-014` ⚠️ **`sync --dry-run` prints no closing line when it has
-      something to do, and does print one when it has nothing to do.** Raised
-      2026-09-16 by `CLI-011`'s shape table, which could not be written without
-      noticing.
-
-      **What is wrong.** `syncOf` reads:
-
-      ```go
-      if result.Changed == 0 && len(result.Refused) == 0 {
-          fmt.Fprintln(environment.stdout, "nothing to do; every item is already linked")
-      } else if !dryRun {
-          fmt.Fprintf(environment.stdout, "%d change(s)\n", result.Changed)
-      }
-      ```
-
-      The count is suppressed on a dry run — correctly, nothing changed — and
-      **nothing replaces it**. So the two dry runs have different shapes:
-
-      | `petkit sync --dry-run` | last line |
-      | --- | --- |
-      | with something to do | `would create  skill/x  …` — the plan, and then it stops |
-      | with nothing to do | `nothing to do; every item is already linked` |
-
-      ⚠️ **The `would ` prefix is the only thing saying this did not happen**, and
-      it is on the item lines rather than at the end, where a reader who scrolls
-      to the bottom looks. A command whose entire purpose is "tell me what would
-      happen without doing it" ends by not saying it.
-
-      **What it is not.** Not a bug in the plan, which is correct, and not a
-      missing exit code. It is the closing sentence of a report.
-
-      **What closing it needs.** A decision on one line: whether `--dry-run` ends
-      with something like `N change(s) — nothing was changed; this was a dry run`,
-      or whether the prefix is deliberately the whole of it. ⚠️ Either way the
-      shape table in `cmd/petkit/shape_test.go` carries the answer and has to move
-      with it — the two dry-run cases there are the current behaviour written
-      down, not an endorsement of it.
-
-      → `cmd/petkit/main.go` (`syncOf`), `cmd/petkit/shape_test.go`.
 
 ## Decided against — do not re-raise
 

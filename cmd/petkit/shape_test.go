@@ -49,14 +49,13 @@ func TestEveryCommandPrintsTheShapeItIsMeantTo(t *testing.T) {
 			shape: []string{resolved, `ok…skill/writing-todo…`, `nothing to do; every item is already linked`},
 		},
 		{
-			// ⚠️ A dry run with something to do prints NO closing line: the count
-			// is suppressed and nothing replaces it, so the `would ` prefix on
-			// each line is the whole of what says this did not happen. The case
-			// below is the asymmetry — with nothing to do, a dry run does print a
-			// closing line. Recorded rather than changed: `CLI-014`.
+			// ⚠️ A dry run says what it would do and then says nothing happened.
+			// It used to print no closing line at all when it had something to do,
+			// while printing one when it had nothing to do — the quieter case got
+			// the closing sentence and the louder one did not. CLI-014.
 			name:  "sync --dry-run, with something to do",
 			args:  []string{"sync", "--dry-run"},
-			shape: []string{resolved, `would create…skill/writing-todo…`},
+			shape: []string{resolved, `would create…skill/writing-todo…`, `1 change(s) would be made; nothing was changed`},
 		},
 		{
 			name:  "sync --dry-run, with nothing to do",
