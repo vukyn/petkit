@@ -183,3 +183,34 @@ func TestInitBacksUpAConfigItReplaces(t *testing.T) {
 		t.Errorf("the backup is %q, want %q", backup, original)
 	}
 }
+
+// CLI-002. ⚠️ The sentence named `petkit init`, which is the answer for a
+// machine that already HAS a clone. A machine with no clone at all cannot act on
+// it — `petkit setup` is that machine's answer, and it was missing from the one
+// sentence petkit prints when it can find nothing. The first thing a new machine
+// reads was the one thing that did not apply to it.
+//
+// Its positive case is TestInitRecordsTheRepositoryAndFindUsesIt above: once a
+// repository is recorded, this sentence is not printed at all.
+func TestTheMissingRepositoryErrorNamesEveryWayOut(t *testing.T) {
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	elsewhere := filepath.Join(base, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	_, err := state.Find(elsewhere, home, noEnv)
+	if err == nil {
+		t.Fatal("a repository was found where there is none")
+	}
+	for _, way := range []string{
+		"petkit setup",          // no clone at all
+		"petkit init",           // a clone this machine has not recorded
+		"inside the repository", // a clone this shell is already standing in
+	} {
+		if !strings.Contains(err.Error(), way) {
+			t.Errorf("the error does not name %q as a way out: %v", way, err)
+		}
+	}
+}

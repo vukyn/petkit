@@ -110,9 +110,14 @@ func Find(workingDir, home string, env func(string) string) (Location, error) {
 		return Location{Root: root, From: configPath, How: SourceRecord, Recorded: root}, nil
 	}
 
+	// ⚠️ All three ways out are named, and each says which machine it is for.
+	// The sentence used to name `petkit init` alone — the answer for a machine
+	// that already has a clone — so the first thing a brand-new machine read was
+	// the one instruction that did not apply to it. CLI-002.
 	return Location{}, fmt.Errorf(
 		"cannot find the petkit repository: no %s above %s, %s is not set, and nothing is recorded in %s — "+
-			"run `petkit init /path/to/petkit` once, or run petkit from inside the repository",
+			"run `petkit setup` if this machine has no clone yet, `petkit init /path/to/petkit` once if it "+
+			"has one, or run petkit from inside the repository",
 		manifest.FileName, workingDir, EnvHome, configPath)
 }
 
