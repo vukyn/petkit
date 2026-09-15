@@ -745,3 +745,52 @@ the way it is. The entries carry the same `AREA-NNN` codes.
       `TestAllProblemsAreReportedTogether`. After: both green, `gofmt` clean,
       `go vet ./...` clean, and `GOOS=darwin` build and `GOOS=linux` vet still
       clean. The package's three remaining failures are `CLI-012`, not this.
+
+- [x] `CLI-002` **`check` still needs a clone, and after measuring it twice that
+      is the answer, not the defect.** Raised 2026-09-14 with the first version,
+      closed 2026-09-16 — the premise moved under it once when `CLI-005` shipped,
+      and a second time when the message was fixed.
+
+      **What the entry was raised on.** `petkit check` compares the checkout
+      against the newest tag, so it needs a repository, and a machine with only a
+      binary got an error instead of an answer. Two questions were tangled inside
+      that: *can a binary get itself a clone?* and *can a binary answer "am I
+      behind?" without one?*
+
+      **The first question closed itself.** `CLI-005` shipped `petkit setup`,
+      which clones and records in one command; `check` answers normally from that
+      second on — measured end to end, a fresh binary against a disposable `HOME`
+      reporting `checkout on v0.2.0`. ⚠️ `go install …@latest` was measured too,
+      against a clean module cache with no `GOPRIVATE` and no credentials: both
+      `@latest` and `@v0.1.0` install and report their tag.
+
+      **The second question is refused, and it has its own code: `CLI-013`.**
+
+      **What shipped for the half that was real.** The sentence a machine with no
+      repository gets named `petkit init` alone — the answer for a machine that
+      already has a clone. ⚠️ **The first thing a brand-new machine read was the
+      one instruction that did not apply to it.** It now names three ways out and
+      says which machine each is for:
+
+      ```
+      run `petkit setup` if this machine has no clone yet,
+      `petkit init /path/to/petkit` once if it has one,
+      or run petkit from inside the repository
+      ```
+
+      Verified by running a built binary against an empty `HOME`, not only in a
+      test. Mutation: dropping `petkit setup` from the sentence turns
+      `TestTheMissingRepositoryErrorNamesEveryWayOut` red.
+
+      ⚠️ **`README.md` lost a paragraph, and that is the part worth remembering.**
+      It carried two sentences explaining that setup is for a machine with no
+      clone and init for a machine with one — prose that existed only because the
+      message would not say it. **Documentation that explains what a message
+      declines to say is the defect written down beside itself**, and the fix
+      deletes the documentation rather than improving it.
+
+      **The tell.** This entry sat open for two days as "`check` still needs a
+      clone", which was true and was never the thing to fix. What was wrong was
+      one sentence pointing a new machine at the wrong command. ⚠️ **When an entry
+      survives two rounds of its premise moving, re-read what it actually asks
+      for** — twice here the answer was smaller than the title.
