@@ -70,7 +70,8 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-007` | done | A missing git said `executable file not found in %PATH%`; it now names git and says what needs it |
 | `CLI-002` | done | Twice the premise moved and twice the answer was smaller than the title: `CLI-005` gave a binary its own clone, and what was actually wrong was one sentence pointing a new machine at `petkit init`. The tags-API half is refused as `CLI-013` |
 | `CLI-010` | done | The resolution was invisible: `status`, `sync`, `doctor` and `check` now open with which repository they resolved and how, and say both when the walked-up one is not the one `init` recorded |
-| `CLI-011` | open | Every CLI test asserts with `strings.Contains` over the whole buffer, so a brand-new first line was invisible to all of them and a line going missing would be too |
+| `CLI-011` | done | The suite protected the words and not the shape: four lines were deleted from production one at a time and two of them were invisible to all 141 tests. One helper, one table, nine command shapes -- each line in order, count asserted, wording still sampled |
+| `CLI-014` | open | `sync --dry-run` prints no closing line when it has something to do and does print one when it has nothing to do -- a command whose whole purpose is "what would happen" ends by not saying nothing happened |
 | `CLI-012` | open | `make check` could not pass on Windows. The line endings are fixed — `.gitattributes` pins LF and `gofmt` is clean — but four tests still inject a platform while `path/filepath` and NTFS answer for the host |
 | `CLI-009` | done | Run on a real Windows 11 machine at last. Every behaviour the port claimed held — an idempotent second `sync` above all — and the run found three things nothing on macOS could: `LINK-006`, `MFST-006` and `CLI-012` |
 | `DOC-001` | done | The fourteen stale copies were not shadowing anything — the plugin was installed project-scoped to another project and did not load here at all. Installed at user scope, the thirteen copies backed up and removed |
@@ -196,42 +197,6 @@ defect fixed in `internal/link` is still `SETT`.
       pretending to be a field. ⚠️ A field that is parsed and ignored is worse than
       no field: the next person adds `kind: script` and reasonably expects it to
       change something.
-
-- [ ] `CLI-011` ⚠️ **Every CLI test asserts by searching the whole buffer, so
-      the suite cannot see a line arrive or leave.** Raised 2026-09-14 out of
-      `CLI-010`, which was expected to break these tests and did not.
-
-      **What is wrong.** The assertions in `cmd/petkit/main_test.go` are
-      `strings.Contains(stdout, "…")` over the entire output. That answers "does
-      this phrase appear somewhere", which is a much weaker question than the one
-      the tests are named for.
-
-      **The measurement that raised it.** `CLI-010` added a **new first line** to
-      `status`, `sync`, `doctor` and `check` — every command that resolves a
-      repository. The brief predicted the byte-for-byte assertions would fail and
-      that they would have to be updated. **Not one test moved**, and `make check`
-      stayed green. A change to the first thing a user sees, on four commands, was
-      invisible to 141 tests.
-
-      ⚠️ **The symmetric case is the one that will bite.** A `Contains` assertion
-      cannot notice a line *disappearing* either, as long as the phrase it hunts
-      for survives elsewhere in the buffer. So the suite protects the words and
-      not the shape: order, position, and whether a line exists at all are all
-      unmeasured. The two tests `CLI-010` added read the first line by index
-      (`strings.SplitN(stdout, "\n", 2)[0]`) precisely to sidestep this, and they
-      are currently the only ones in the file that can.
-
-      **What closing it needs.** Not a rewrite of every assertion — the phrase
-      checks are fine for "this error names the item". What is missing is a
-      **shape** assertion per command: the sequence of lines a command prints, in
-      order, with the variable parts matched loosely. One helper, one table, and
-      every command's skeleton becomes a thing the suite owns.
-
-      ⚠️ **Do not close this by switching every `Contains` to an equality check.**
-      Output that is fully pinned is output nobody can improve without a red
-      suite, and this file already argues the opposite for messages that are the
-      interface (`CLI-003`). The line to hold is: **the shape is asserted, the
-      wording is sampled.**
 
 - [ ] `LINK-006` ⚠️ **A source that is missing when `sync` runs leaves a Windows
       *file*-flavour symlink pointing at a directory, nothing ever repairs it,
@@ -407,6 +372,46 @@ defect fixed in `internal/link` is still `SETT`.
       `internal/manifest/manifest.go` (`ExpandTilde`), `internal/ospath`
       (`IsAbs` is the pattern), `internal/link/windows_test.go`,
       `internal/manifest/layout_test.go`.
+
+- [ ] `CLI-014` ⚠️ **`sync --dry-run` prints no closing line when it has
+      something to do, and does print one when it has nothing to do.** Raised
+      2026-09-16 by `CLI-011`'s shape table, which could not be written without
+      noticing.
+
+      **What is wrong.** `syncOf` reads:
+
+      ```go
+      if result.Changed == 0 && len(result.Refused) == 0 {
+          fmt.Fprintln(environment.stdout, "nothing to do; every item is already linked")
+      } else if !dryRun {
+          fmt.Fprintf(environment.stdout, "%d change(s)\n", result.Changed)
+      }
+      ```
+
+      The count is suppressed on a dry run — correctly, nothing changed — and
+      **nothing replaces it**. So the two dry runs have different shapes:
+
+      | `petkit sync --dry-run` | last line |
+      | --- | --- |
+      | with something to do | `would create  skill/x  …` — the plan, and then it stops |
+      | with nothing to do | `nothing to do; every item is already linked` |
+
+      ⚠️ **The `would ` prefix is the only thing saying this did not happen**, and
+      it is on the item lines rather than at the end, where a reader who scrolls
+      to the bottom looks. A command whose entire purpose is "tell me what would
+      happen without doing it" ends by not saying it.
+
+      **What it is not.** Not a bug in the plan, which is correct, and not a
+      missing exit code. It is the closing sentence of a report.
+
+      **What closing it needs.** A decision on one line: whether `--dry-run` ends
+      with something like `N change(s) — nothing was changed; this was a dry run`,
+      or whether the prefix is deliberately the whole of it. ⚠️ Either way the
+      shape table in `cmd/petkit/shape_test.go` carries the answer and has to move
+      with it — the two dry-run cases there are the current behaviour written
+      down, not an endorsement of it.
+
+      → `cmd/petkit/main.go` (`syncOf`), `cmd/petkit/shape_test.go`.
 
 ## Decided against — do not re-raise
 
