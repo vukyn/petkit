@@ -794,3 +794,77 @@ the way it is. The entries carry the same `AREA-NNN` codes.
       one sentence pointing a new machine at the wrong command. ⚠️ **When an entry
       survives two rounds of its premise moving, re-read what it actually asks
       for** — twice here the answer was smaller than the title.
+
+- [x] `CLI-011` ⚠️ **The suite protected the words and not the shape, and two of
+      four deletions tried against it were invisible to all 141 tests.** Raised
+      2026-09-14 out of `CLI-010`, closed 2026-09-16.
+
+      **What was wrong.** Every assertion in `cmd/petkit/main_test.go` is
+      `strings.Contains(stdout, "…")` over the whole buffer. That answers "does
+      this phrase appear somewhere", which is weaker than the question the tests
+      are named for — and it cannot see order, position, or whether a line exists
+      at all.
+
+      **The measurement that raised it.** `CLI-010` added a new **first** line to
+      four commands. The brief predicted the assertions would break and need
+      updating. **Not one test moved.** A change to the first thing a user sees,
+      on four commands, was invisible to the whole file.
+
+      **The measurement that closed it.** Four lines were deleted from production
+      one at a time, and both suites were run against each deletion:
+
+      | line deleted | shape subtests red | every other test in the package |
+      | --- | ---: | --- |
+      | the `N change(s)` footer | 1 | **nothing** |
+      | `nothing to do; every item is already linked` | 2 | one |
+      | setup's "made no links of its own" block | 1 | **nothing** |
+      | the `CLI-010` first line | 7 | two — the ones `CLI-010` added, which read the first line by index |
+
+      ⚠️ **Two of the four were invisible to everything that existed before this
+      file.** The fourth row is the honest one to read twice: the line `CLI-011`
+      was raised over is now covered twice, because `CLI-010` wrote two tests
+      specifically to cover it. **A suite that has to add a bespoke test per line
+      is the state this entry describes** — the shape table is what makes that
+      the default instead of the exception.
+
+      **What shipped.** `cmd/petkit/shape_test.go`: one helper and one table.
+      Nine shapes — `status`, `sync` in four states, `doctor` in two, `version`,
+      `setup` — each a list of whole-line patterns in order, with the line count
+      asserted. The pattern language is one character: `…` matches any run,
+      everything else is literal, and each pattern is anchored.
+
+      ⚠️ **The wording stays sampled, and that was the constraint, not an
+      oversight.** Output that is pinned byte for byte is output nobody can
+      improve without a red suite, which `CLI-003` argues against for the same
+      reason. The line held is: **the shape is asserted, the wording is sampled.**
+
+      ⚠️ **The helper owes its own tests and has them.** `assertShape` decides
+      whether the table passes, so a helper nobody has watched fail would move the
+      problem rather than fix it. Five cases: the shape matching, a line
+      arriving, a line leaving, two lines swapping, and — the one this file exists
+      for — **a phrase surviving in the wrong line**, which `strings.Contains`
+      passes and an anchored pattern refuses. Mutations: removing the line-count
+      check or dropping the `^…$` anchors each turns that test red.
+
+      **Two things the table found by existing.**
+
+      - ⚠️ `sync --dry-run` prints **no closing line at all** when it has
+        something to do, while printing one when it has nothing to do. The `would `
+        prefix on each line is the whole of what says nothing happened. Recorded
+        as `CLI-014`, not changed here — a shape table that starts editing the
+        shapes it is measuring is not a measurement.
+      - ⚠️ A first draft of the `setup` case passed a **relative** path as the
+        clone target. `setup` resolved it against the process working directory
+        and wrote a real directory into this repository. Caught, removed, and the
+        table now substitutes a sandbox path for a placeholder — **a test that
+        writes into the tree it is measuring is the failure this package's
+        sandbox exists to prevent**, and it took one careless argument to reach
+        it.
+
+      **The tell, for next time.** The entry could have been closed by switching
+      assertions to equality, and that was named in advance as the wrong move.
+      What made the difference was asking a different question — not "is this
+      phrase present" but "is this the shape" — and the four-deletion table is
+      what proves the new question is the stronger one. ⚠️ **A suite is measured
+      by what it notices missing, not by what it finds present**, and that is a
+      thing you have to delete lines to learn.
