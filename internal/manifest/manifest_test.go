@@ -10,6 +10,10 @@ import (
 	"github.com/vukyn/petkit/internal/ospath"
 )
 
+// unix is any platform that is not Windows. It is named explicitly so the
+// Unix answer is asserted on a Windows machine and the Windows answer here.
+const unix = "linux"
+
 func parse(t *testing.T, body string) (*manifest.Manifest, error) {
 	t.Helper()
 	return manifest.Parse([]byte(body), t.TempDir())
@@ -238,30 +242,52 @@ items:
 
 // ~ is expanded against the home directory it is given, and nothing else is
 // expanded at all.
+//
+// ⚠️ The home directory is shaped for the platform being asked about, and
+// both platforms are asked on whichever machine runs this. Writing a Unix literal
+// and letting the host's filepath answer underneath is how CLI-012 kept this test
+// red on Windows while it passed everywhere else: the fixture was the thing that
+// could not travel, not the product.
 func TestTildeIsTheOnlyTemplating(t *testing.T) {
-	home := "/tmp/home"
-	cases := map[string]string{
-		"~/.claude/skills/x": filepath.Join(home, ".claude", "skills", "x"),
-		"~":                  home,
-		"$HOME/.claude":      "$HOME/.claude",
-		"${HOME}/.claude":    "${HOME}/.claude",
-	}
-	for input, want := range cases {
-		if got := manifest.ExpandTilde(input, home); got != want {
-			t.Errorf("ExpandTilde(%q) = %q, want %q", input, got, want)
+	for _, platform := range []struct {
+		goos     string
+		home     string
+		expanded string
+	}{
+		{goos: unix, home: "/home/me", expanded: "/home/me/.claude/skills/x"},
+		{goos: ospath.Windows, home: `C:\Users\me`, expanded: `C:\Users\me\.claude\skills\x`},
+	} {
+		cases := map[string]string{
+			"~/.claude/skills/x": platform.expanded,
+			"~":                  platform.home,
+			"$HOME/.claude":      "$HOME/.claude",
+			"${HOME}/.claude":    "${HOME}/.claude",
+		}
+		for input, want := range cases {
+			if got := manifest.ExpandTilde(input, platform.home, platform.goos); got != want {
+				t.Errorf("ExpandTilde(%q, %s) = %q, want %q", input, platform.goos, got, want)
+			}
 		}
 	}
 }
 
 func TestDisplayIsTheInverseOfExpansion(t *testing.T) {
-	home := "/tmp/home"
-	layout := manifest.NewLayout(home, ospath.Current(), nil)
-	expanded := layout.Resolve("~/.claude/skills/x")
-	if got := layout.Display(expanded); got != "~/.claude/skills/x" {
-		t.Errorf("Display(%q) = %q", expanded, got)
-	}
-	if got := layout.Display("/elsewhere/x"); got != "/elsewhere/x" {
-		t.Errorf("a path outside the home directory was collapsed to %q", got)
+	for _, platform := range []struct {
+		goos    string
+		home    string
+		outside string
+	}{
+		{goos: unix, home: "/home/me", outside: "/elsewhere/x"},
+		{goos: ospath.Windows, home: `C:\Users\me`, outside: `D:\elsewhere\x`},
+	} {
+		layout := manifest.NewLayout(platform.home, platform.goos, nil)
+		expanded := layout.Resolve("~/.claude/skills/x")
+		if got := layout.Display(expanded); got != "~/.claude/skills/x" {
+			t.Errorf("%s: Display(%q) = %q", platform.goos, expanded, got)
+		}
+		if got := layout.Display(platform.outside); got != platform.outside {
+			t.Errorf("%s: a path outside the home directory was collapsed to %q", platform.goos, got)
+		}
 	}
 }
 

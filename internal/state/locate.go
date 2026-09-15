@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/vukyn/petkit/internal/manifest"
+	"github.com/vukyn/petkit/internal/ospath"
 	"github.com/vukyn/petkit/internal/settings"
 )
 
@@ -81,7 +82,7 @@ func Find(workingDir, home string, env func(string) string) (Location, error) {
 	}
 
 	if raw := env(EnvHome); raw != "" {
-		root := manifest.ExpandTilde(raw, home)
+		root := manifest.ExpandTilde(raw, home, ospath.Current())
 		if !hasManifest(root) {
 			return Location{}, fmt.Errorf(
 				"%s is set to %s, but there is no %s there; point it at the petkit repository or unset it",
@@ -101,7 +102,7 @@ func Find(workingDir, home string, env func(string) string) (Location, error) {
 	case err != nil:
 		return Location{}, err
 	case config != nil && config.Repo != "":
-		root := manifest.ExpandTilde(config.Repo, home)
+		root := manifest.ExpandTilde(config.Repo, home, ospath.Current())
 		if !hasManifest(root) {
 			return Location{}, fmt.Errorf(
 				"%s records the repository as %s, but there is no %s there; run `petkit init <path>` again",
@@ -134,7 +135,7 @@ func recordedRepository(home string) string {
 	if err != nil || config == nil || config.Repo == "" {
 		return ""
 	}
-	return manifest.ExpandTilde(config.Repo, home)
+	return manifest.ExpandTilde(config.Repo, home, ospath.Current())
 }
 
 func walkUp(start string) (string, bool) {
@@ -180,7 +181,7 @@ func ReadConfig(path string) (*Config, error) {
 // directory. It refuses a path that is not a petkit repository, because a
 // recorded path that resolves to nothing is worse than no record at all.
 func Init(candidate, home string) (Location, error) {
-	root := manifest.ExpandTilde(candidate, home)
+	root := manifest.ExpandTilde(candidate, home, ospath.Current())
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return Location{}, fmt.Errorf("cannot resolve %s: %w", candidate, err)

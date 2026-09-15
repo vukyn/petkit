@@ -177,3 +177,63 @@ func TestIsAbsAnywhereAsksBothPlatformsAtOnce(t *testing.T) {
 		}
 	}
 }
+
+// CLI-012. ⚠️ filepath.Clean is compiled for the host, so a Layout carrying
+// GOOS="linux" still cleaned its paths the Windows way when the suite ran on
+// Windows: the injected platform and path/filepath disagreed, and filepath won.
+// Four tests failed for that reason alone and none of them was a defect in the
+// product.
+func TestCleanAnswersForThePlatformItIsGiven(t *testing.T) {
+	cases := []struct {
+		path    string
+		windows string
+		unix    string
+	}{
+		{path: "", windows: ".", unix: "."},
+		{path: ".", windows: ".", unix: "."},
+		{path: "a/b/../c", windows: `a\c`, unix: "a/c"},
+		{path: "a//b", windows: `a\b`, unix: "a/b"},
+		{path: "a/b/", windows: `a\b`, unix: "a/b"},
+		{path: "./a/./b", windows: `a\b`, unix: "a/b"},
+		{path: "../x", windows: `..\x`, unix: "../x"},
+		{path: "/home/me/.claude", windows: `\home\me\.claude`, unix: "/home/me/.claude"},
+		// ⚠️ Off Windows a backslash is an ordinary character in a file name, so
+		// this is one segment ending in one, and nothing about it is a trailing
+		// separator to strip. Both answers are right; they are answers to
+		// different questions.
+		{path: `C:\Users\me\`, windows: `C:\Users\me`, unix: `C:\Users\me\`},
+		{path: "C:/Users/me/x", windows: `C:\Users\me\x`, unix: "C:/Users/me/x"},
+	}
+	for _, c := range cases {
+		if got := ospath.Clean(c.path, ospath.Windows); got != c.windows {
+			t.Errorf("Clean(%q, windows) = %q, want %q", c.path, got, c.windows)
+		}
+		if got := ospath.Clean(c.path, unix); got != c.unix {
+			t.Errorf("Clean(%q, %s) = %q, want %q", c.path, unix, got, c.unix)
+		}
+	}
+}
+
+// Join is Clean's companion: the manifest writes "/" on every machine, and the
+// separator arrives when a target stops being text and becomes a path.
+func TestJoinUsesTheSeparatorOfThePlatformItIsGiven(t *testing.T) {
+	cases := []struct {
+		elements []string
+		windows  string
+		unix     string
+	}{
+		{elements: []string{`C:\Users\me`, "skills/x"}, windows: `C:\Users\me\skills\x`, unix: `C:\Users\me/skills/x`},
+		{elements: []string{"/home/me", ".claude", "skills"}, windows: `\home\me\.claude\skills`, unix: "/home/me/.claude/skills"},
+		{elements: []string{"a", "", "b"}, windows: `a\b`, unix: "a/b"},
+		{elements: []string{"a", "../b"}, windows: "b", unix: "b"},
+		{elements: nil, windows: "", unix: ""},
+	}
+	for _, c := range cases {
+		if got := ospath.Join(ospath.Windows, c.elements...); got != c.windows {
+			t.Errorf("Join(windows, %q) = %q, want %q", c.elements, got, c.windows)
+		}
+		if got := ospath.Join(unix, c.elements...); got != c.unix {
+			t.Errorf("Join(%s, %q) = %q, want %q", unix, c.elements, got, c.unix)
+		}
+	}
+}

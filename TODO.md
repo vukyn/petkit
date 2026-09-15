@@ -72,7 +72,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-010` | done | The resolution was invisible: `status`, `sync`, `doctor` and `check` now open with which repository they resolved and how, and say both when the walked-up one is not the one `init` recorded |
 | `CLI-011` | done | The suite protected the words and not the shape: four lines were deleted from production one at a time and two of them were invisible to all 141 tests. One helper, one table, nine command shapes -- each line in order, count asserted, wording still sampled |
 | `CLI-014` | open | `sync --dry-run` prints no closing line when it has something to do and does print one when it has nothing to do -- a command whose whole purpose is "what would happen" ends by not saying nothing happened |
-| `CLI-012` | open | `make check` could not pass on Windows. The line endings are fixed — `.gitattributes` pins LF and `gofmt` is clean — but four tests still inject a platform while `path/filepath` and NTFS answer for the host |
+| `CLI-012` | done | `make check` could not pass on Windows and now exits 0 there: `.gitattributes` pins LF, `ospath.Clean`/`Join` take the platform as an argument so three fixtures can ask both, and the fourth test skips on a measured case-folding filesystem — a question no volume that folds case can be asked |
 | `CLI-009` | done | Run on a real Windows 11 machine at last. Every behaviour the port claimed held — an idempotent second `sync` above all — and the run found three things nothing on macOS could: `LINK-006`, `MFST-006` and `CLI-012` |
 | `DOC-001` | done | The fourteen stale copies were not shadowing anything — the plugin was installed project-scoped to another project and did not load here at all. Installed at user scope, the thirteen copies backed up and removed |
 | `LINK-003` | refused | Installing by copy instead of by symlink |
@@ -168,7 +168,10 @@ defect fixed in `internal/link` is still `SETT`.
   no test on macOS could reach: `LINK-006` (a source missing at `sync` time
   makes a file-flavour symlink nothing repairs), `MFST-006` (`filepath.IsAbs`
   refuses `/x` as a source on macOS and accepts it on Windows) and `CLI-012`
-  (**`make check` is red on Windows**, so the gate has never spoken there).
+  (**`make check` could not pass on Windows at all**, so the gate had never
+  spoken there). `MFST-006` and `CLI-012` are closed and `make check` has
+  exited 0 on Windows since 2026-09-16; `LINK-006` is still open on the half
+  that would repair a wrong-flavour link rather than describe one.
 
 ## Not done
 
@@ -302,76 +305,6 @@ defect fixed in `internal/link` is still `SETT`.
 
       → `internal/link/doctor.go` (`followSymlink`, done), `internal/link/link.go`
       (`sync`'s side, open), `docs/decisions.md` § `CLI-009`.
-
-- [ ] `CLI-012` ⚠️ **`make check` could not pass on Windows, for two reasons
-      that have nothing to do with each other — and it had never been run there
-      at all.** Raised 2026-09-15 by the Windows run (`CLI-009`). ⚠️ **Reason one
-      shipped 2026-09-16; this entry now stands on reason two alone, and the gate
-      is still red.**
-
-      **Reason one — FIXED. gofmt failed on all 26 Go files, and the only
-      difference was `\r`.** The repository carried no `.gitattributes`, so a
-      checkout on a machine with `core.autocrlf=true` — the Git for Windows
-      default — wrote every file CRLF. `gofmt` normalises to LF and therefore
-      reported every file as unformatted. `gofmt -d internal/version/version.go`
-      was 134 changed lines and **every one of them differed only by a trailing
-      `\r`**. ⚠️ The gate was not wrong here; the checkout was. **What shipped:**
-      `.gitattributes` carrying `* text=auto eol=lf`, and the working tree
-      renormalised in a commit of its own — `gofmt -l .` has been empty on
-      Windows since. ⚠️ That commit rewrote the line endings of every tracked
-      file, which is why it was kept alone; a later change to that line owes the
-      same treatment.
-
-      **Reason two — OPEN. Four tests fail because the platform is a parameter
-      but `path/filepath` is not.** They were six until `MFST-006` closed: two of
-      those were a real defect in the product and are gone. These four are not.
-
-      | test | says |
-      | --- | --- |
-      | `TestTildeIsTheOnlyTemplating` | `ExpandTilde("~") = "\tmp\home", want "/tmp/home"` |
-      | `TestDisplayIsTheInverseOfExpansion` | `a path outside the home directory was collapsed to "\elsewhere\x"` |
-      | `TestDisplayDoesNotFoldCaseOffWindows` | `a differently-cased Unix path was collapsed to "\home\ME\.claude\x"` |
-      | `TestEverywhereElseALinkThatDiffersOnlyInCaseIsStale` | `status off Windows = "linked", want "stale"` |
-
-      ⚠️ **This is the cost of the technique `CLI-009`'s port was built on, and
-      it is worth stating plainly.** Passing the platform in as a parameter
-      (`manifest.Layout.GOOS`, `internal/ospath`) makes a Windows branch runnable
-      on macOS, and it was right to do. But `path/filepath` binds to `GOOS` at
-      **compile** time and the host filesystem has its own opinion about case,
-      so a test that injects "not Windows" while running on Windows is asking
-      two authorities that disagree. The first three fail on the separator; the
-      fourth fails because NTFS resolved a differently-cased path the injected
-      platform was told to treat as a different file.
-
-      ⚠️ **Two other failures were never this, and they are already gone.**
-      `TestAnAbsoluteSourceIsRefused` and `TestAllProblemsAreReportedTogether`
-      were `MFST-006`, a real defect in the product, fixed 2026-09-16. The four
-      above are not defects in the product and **must not** be fixed by loosening
-      an assertion.
-
-      **What has to be decided, and it is a design question.** Either the
-      cross-platform tests build their fixture paths through the injected
-      platform instead of writing Unix literals — which means `ExpandTilde` and
-      friends stop calling `filepath` directly and take the separator from
-      `ospath` too — or those four tests are marked as running on one OS only,
-      which gives up the property the technique was adopted for. ⚠️ **The second
-      option is cheaper and worse**: it would leave the Windows branches
-      unexercised on Windows, which is the state `CLI-009` existed to end.
-
-      ⚠️ **`MFST-006` is a worked example of the first option and should be read
-      before choosing.** It moved one question (`is this absolute?`) out of
-      `path/filepath` and into `ospath` with the platform as an argument, and the
-      test that resulted asserts both platforms' answers on whichever machine
-      runs it. `ExpandTilde` is the same shape of problem, one size up.
-
-      ⚠️ **Nothing may claim "`make check` is green on Windows" while this entry
-      is open.** Half the reason is gone and the gate is still red; the honest
-      sentence until reason two lands is "gofmt is clean and four tests fail".
-
-      → `.gitattributes` (shipped), `Makefile` § `check`,
-      `internal/manifest/manifest.go` (`ExpandTilde`), `internal/ospath`
-      (`IsAbs` is the pattern), `internal/link/windows_test.go`,
-      `internal/manifest/layout_test.go`.
 
 - [ ] `CLI-014` ⚠️ **`sync --dry-run` prints no closing line when it has
       something to do, and does print one when it has nothing to do.** Raised

@@ -190,7 +190,7 @@ func backslashProblem(label, field, value string) string {
 // platform the path is being built for; the manifest writes a source with "/"
 // on every machine, so that is where the separator is decided.
 func (i Item) SourcePath(root, goos string) string {
-	return filepath.Join(root, ospath.FromSlash(i.Source, goos))
+	return ospath.Join(goos, root, i.Source)
 }
 
 // TargetPath is the item's absolute path on the machine.
@@ -200,12 +200,17 @@ func (i Item) TargetPath(layout Layout) string {
 
 // ExpandTilde expands a leading ~ against home. It is the only templating
 // petkit does: no $HOME, no other variables.
-func ExpandTilde(path, home string) string {
+//
+// goos is the platform the path is being built for. ⚠️ It is a parameter and not
+// runtime.GOOS because the string being expanded is usually manifest text, which
+// is the same on every machine — so the machine may not be the thing that decides
+// what it means (CLI-012). A caller asking about the host passes ospath.Current().
+func ExpandTilde(path, home, goos string) string {
 	switch {
 	case path == "~":
-		return filepath.Clean(home)
+		return ospath.Clean(home, goos)
 	case strings.HasPrefix(path, "~/"):
-		return filepath.Join(home, path[len("~/"):])
+		return ospath.Join(goos, home, path[len("~/"):])
 	default:
 		return path
 	}
@@ -246,14 +251,14 @@ type Layout struct {
 func NewLayout(home, goos string, env func(string) string) Layout {
 	layout := Layout{
 		Home:   home,
-		Config: filepath.Join(home, ConfigDirName),
+		Config: ospath.Join(goos, home, ConfigDirName),
 		GOOS:   goos,
 	}
 	if env == nil {
 		return layout
 	}
 	if raw := env(EnvConfigDir); raw != "" {
-		layout.Config = filepath.Clean(ExpandTilde(raw, home))
+		layout.Config = ospath.Clean(ExpandTilde(raw, home, goos), goos)
 	}
 	return layout
 }
@@ -268,9 +273,9 @@ func NewLayout(home, goos string, env func(string) string) Layout {
 func (l Layout) Resolve(target string) string {
 	switch {
 	case target == "~":
-		return filepath.Clean(l.Home)
+		return ospath.Clean(l.Home, l.GOOS)
 	case target == configDirTarget:
-		return filepath.Clean(l.Config)
+		return ospath.Clean(l.Config, l.GOOS)
 	case strings.HasPrefix(target, configDirTarget+"/"):
 		return l.join(l.Config, target[len(configDirTarget)+1:])
 	case strings.HasPrefix(target, "~/"):
@@ -288,8 +293,8 @@ func (l Layout) Resolve(target string) string {
 // honest answer for a configuration directory moved outside `~`: writing it back
 // as `~/.claude/...` would name a place the file is not.
 func (l Layout) Display(path string) string {
-	home := filepath.Clean(l.Home)
-	clean := filepath.Clean(path)
+	home := ospath.Clean(l.Home, l.GOOS)
+	clean := ospath.Clean(path, l.GOOS)
 	rest, under := ospath.Under(clean, home, l.GOOS)
 	switch {
 	case !under:
@@ -303,10 +308,10 @@ func (l Layout) Display(path string) string {
 
 // SkillsDir is where doctor surveys for entries petkit does not manage.
 func (l Layout) SkillsDir() string {
-	return filepath.Join(l.Config, "skills")
+	return ospath.Join(l.GOOS, l.Config, "skills")
 }
 
 // join sticks a "/"-written remainder onto an absolute base.
 func (l Layout) join(base, rest string) string {
-	return filepath.Join(base, ospath.FromSlash(rest, l.GOOS))
+	return ospath.Join(l.GOOS, base, rest)
 }
