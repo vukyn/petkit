@@ -51,7 +51,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `LINK-002` | open | A real directory where a link should go can only be refused — there is no way to adopt one |
 | `LINK-004` | done | Windows refuses `os.Symlink` without Developer Mode or elevation; the errno is now translated into a message naming the cause and both ways out — and never into a copy |
 | `LINK-005` | done | `status` called a good link `stale` on Windows, so `sync` removed and recreated it every run: path comparison now folds case on Windows only |
-| `LINK-006` | open | A source that is missing when `sync` runs yields a Windows **file**-flavour symlink to a directory: it keeps working for a direct read, but a directory scan cannot see it, `doctor` calls it broken forever and `sync` never repairs it |
+| `LINK-006` | open | A source that is missing when `sync` runs yields a Windows **file**-flavour symlink to a directory: a directory scan cannot see it and `sync` never repairs it. `doctor` at least stopped saying the destination does not exist when it does |
 | `MFST-001` | done | The manifest and its validation |
 | `MFST-004` | done | `~/` is a prefix, not a fence — `~/../elsewhere` passed validation and only `doctor` objected, after `sync` had already made the link. Moved into `validateTarget`; doctor's branch deleted as unreachable |
 | `MFST-005` | done | A backslash in a target or source escaped the home directory on Windows and passed validation on macOS; refused everywhere, and the `/`→separator conversion is now explicit and watchable from here |
@@ -274,6 +274,12 @@ defect fixed in `internal/link` is still `SETT`.
       directory.** Raised 2026-09-15 by the Windows run (`CLI-009`), which
       predicted the shape and then reproduced it.
 
+      ⚠️ **Option 1 below shipped 2026-09-16: `doctor` no longer makes a false
+      statement about the filesystem. Everything else in this entry still
+      stands** — the link is still the wrong flavour, `sync` still calls it `ok`,
+      and the skill is still invisible to a directory scan. The reading improved;
+      the machine did not.
+
       **What is wrong.** Go's `os.Symlink` on Windows picks the file flavour or
       the directory flavour by looking at the destination. A source that is not
       there yet is not a directory, so the link is created with
@@ -296,14 +302,26 @@ defect fixed in `internal/link` is still `SETT`.
       | --- | --- | --- |
       | `petkit sync` | `ok`, `nothing to do; every item is already linked` | nothing was repaired |
       | `petkit status` | `linked` | — |
-      | `petkit doctor` | `is a broken symlink: it points at …, which does not exist` | **no** — it exists; and doctor exits 0, so this stays a note run after run |
+      | `petkit doctor`, **before 2026-09-16** | `is a broken symlink: it points at …, which does not exist` | **no** — it exists; and doctor exits 0, so the false sentence stayed a note run after run |
+      | `petkit doctor`, **now** | `is a symlink petkit cannot follow: it points at …, and following it failed: Access is denied.` | yes — measured on the same fixture |
 
-      ⚠️ **`doctor`'s sentence is false, and one missing check is why.**
-      `brokenSymlink` in `internal/link/doctor.go` reasons that "a symlink that
+      ⚠️ **`doctor`'s old sentence was false, and one missing check was why.**
+      `brokenSymlink` in `internal/link/doctor.go` reasoned that "a symlink that
       Lstats but does not Stat is exactly this case". On Windows the `os.Stat`
       of a file-flavour link to a directory fails with **`Access is denied.`**,
-      and `os.IsNotExist(err)` is **`false`** — so a permission error is
+      and `os.IsNotExist(err)` is **`false`** — so a permission error was
       reported as a missing destination.
+
+      **What shipped for it (option 1).** `followSymlink` returns one of four
+      states instead of a bool, and only `os.IsNotExist` produces "does not
+      exist"; anything else says the link could not be followed and quotes why.
+      ⚠️ **`os.Stat` is a parameter**, because the error Windows produces cannot
+      be staged on a Unix filesystem — the same move `internal/ospath` makes for
+      the platform, and the reason the branch can be watched failing at all.
+      Mutation: dropping the `IsNotExist` branch turns the new unit test **and**
+      the existing `TestDoctorReportsABrokenSymlinkUnderTheSkillsDirectory` red.
+      ⚠️ The finding is still `Info` and doctor still exits 0 on it — raising
+      that is part of option 2 or 3, not this.
 
       **What it costs, measured against the real consumer.** Reading a known path
       *through* the link works; **scanning the directory does not**:
@@ -327,10 +345,10 @@ defect fixed in `internal/link` is still `SETT`.
       link should go, which `sync` refuses and leaves alone. This is a link
       petkit itself created and calls `ok`.
 
-      **Three places could own it; deciding which is the work.**
-      1. `doctor` stops reporting every Stat failure as "does not exist". ⚠️ The
-         only one that merely stops a false sentence — no behaviour changes and
-         nothing needs deciding.
+      **Three places could own it; deciding which is what is left.**
+      1. ~~`doctor` stops reporting every Stat failure as "does not exist".~~
+         **SHIPPED 2026-09-16** — the only one that merely stopped a false
+         sentence: no behaviour changed and nothing needed deciding.
       2. `sync` refuses an item whose source is not there. Widens what `sync`
          **refuses**, which is not what `CLAUDE.md` § *The rule the whole tool
          rests on* guards — read it anyway before touching the neighbours.
@@ -340,13 +358,20 @@ defect fixed in `internal/link` is still `SETT`.
          file and a real directory are still refused, and a line here saying why
          the rule moved.
 
-      ⚠️ **Reproduce on Windows, not in a unit test.** Every test here passes the
-      platform in as a parameter, and **this defect is invisible to that
-      technique**: the flavour is chosen by the Windows kernel, not by any branch
-      petkit owns. A test on another OS cannot observe it.
+      ⚠️ **2 and 3 are not alternatives to each other in the obvious way.** A
+      `sync` that refuses a missing source (2) stops the bad link being made
+      tomorrow; it does nothing about one made yesterday, which is what every
+      machine that already ran the old `sync` is carrying. Only 3 repairs those,
+      and 3 is the one that touches the rule this repository rests on.
 
-      → `internal/link/doctor.go` (`brokenSymlink`), `internal/link/link.go`,
-      `docs/decisions.md` § `CLI-009`.
+      ⚠️ **Reproduce on Windows, not in a unit test.** The flavour is chosen by
+      the Windows kernel, not by any branch petkit owns, so the platform-as-a-
+      parameter technique cannot reach it. What option 1 showed is the next best
+      move: the *error* the kernel produces can be a parameter even when the
+      kernel cannot.
+
+      → `internal/link/doctor.go` (`followSymlink`, done), `internal/link/link.go`
+      (`sync`'s side, open), `docs/decisions.md` § `CLI-009`.
 
 - [ ] `CLI-012` ⚠️ **`make check` could not pass on Windows, for two reasons
       that have nothing to do with each other — and it had never been run there
