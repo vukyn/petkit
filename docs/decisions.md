@@ -587,8 +587,8 @@ the way it is. The entries carry the same `AREA-NNN` codes.
 
 - [x] `CLI-009` ⚠️ **Nothing had ever run on Windows. It has now. Every behaviour
       the port claimed held; what the run found was three defects no test on
-      macOS could have reached, one of them being that `make check` is red on
-      Windows — so the gate had never spoken there either.** Raised
+      macOS could have reached, one of them being that `make check` could not pass
+      on Windows at all — so the gate had never spoken there either.** Raised
       2026-09-14 with the port that made the code correct there; closed
       2026-09-15 on Windows 11 Pro 26200, against a machine its owner had just
       installed from scratch.
@@ -645,7 +645,7 @@ the way it is. The entries carry the same `AREA-NNN` codes.
       | --- | --- | --- |
       | `LINK-006` | a source missing at `sync` time yields a **file**-flavour symlink to a directory, which nothing repairs and a directory scan cannot see | a Unix symlink has no flavour; the kernel picks it, not a branch petkit owns |
       | `MFST-006` | `validateSource` refuses an absolute source with `filepath.IsAbs`, which is `true` for `/x` on macOS and `false` on Windows — so the same manifest is refused there and accepted here | the test was correct and ran only where the bug is absent |
-      | `CLI-012` | `make check` is red on Windows: `gofmt` fails on all 26 files over `\r`, and four tests inject a platform while `path/filepath` and NTFS answer for the host | the gate had never been run on Windows at all |
+      | `CLI-012` | `make check` could not pass on Windows: `gofmt` failed on all 26 files over `\r`, and four tests injected a platform while `path/filepath` and NTFS answered for the host | the gate had never been run on Windows at all |
 
       ⚠️ **`MFST-006` is the one to read twice.** It is `MFST-005` from the other
       end — that entry refused a backslash **on every platform** because a
@@ -868,3 +868,74 @@ the way it is. The entries carry the same `AREA-NNN` codes.
       what proves the new question is the stronger one. ⚠️ **A suite is measured
       by what it notices missing, not by what it finds present**, and that is a
       thing you have to delete lines to learn.
+
+- [x] `CLI-012` ⚠️ **`make check` could not pass on Windows at all, and now it
+      exits 0 there.** Raised 2026-09-15 by `CLI-009`, closed 2026-09-16. Two
+      reasons with nothing to do with each other, and a third thing that turned
+      out to be neither.
+
+      **Reason one: line endings.** No `.gitattributes`, so a checkout with
+      `core.autocrlf=true` — the Git for Windows default — wrote every file CRLF,
+      `gofmt` normalised to LF, and all 26 Go files reported as unformatted.
+      `gofmt -d` on one file was 134 changed lines differing only by a trailing
+      `\r`. Fixed by `* text=auto eol=lf` and a renormalising commit of its own.
+
+      **Reason two: the platform was a parameter and `path/filepath` was not.**
+      Three tests injected a platform and then let the host answer underneath:
+
+      | test | what it asked | what answered |
+      | --- | --- | --- |
+      | `TestTildeIsTheOnlyTemplating` | `ExpandTilde` with `home = "/tmp/home"` | `filepath.Clean` on Windows: `\tmp\home` |
+      | `TestDisplayIsTheInverseOfExpansion` | `Display("/elsewhere/x")` | `\elsewhere\x` |
+      | `TestDisplayDoesNotFoldCaseOffWindows` | a Layout with `GOOS = "linux"` | `filepath.Clean`, compiled for the host |
+
+      **What shipped for it.** `ospath.Clean(path, goos)` and
+      `ospath.Join(goos, elements...)` — `filepath`'s arithmetic with the platform
+      as an argument, built on `path` rather than `path/filepath` because `path`
+      is separator-agnostic and `path/filepath` is exactly the thing that could
+      not be asked. `manifest` now routes every path it builds through them:
+      `ExpandTilde` takes a `goos`, and so do `Resolve`, `Display`, `SkillsDir`,
+      `NewLayout` and `SourcePath`. ⚠️ The seven callers in `internal/state` pass
+      `ospath.Current()`, which is not noise: those sites really are asking about
+      this machine, and now they say so instead of assuming it.
+
+      The three fixtures then stopped writing Unix literals and ask both
+      platforms, the way `MFST-006`'s test does. Mutations: making `Clean` ignore
+      its `goos` turns 12 tests red, and `Join` 10.
+
+      ⚠️ **The fourth test was never reason two, and finding that out is the
+      result worth keeping.** `TestEverywhereElseALinkThatDiffersOnlyInCaseIsStale`
+      failed because `samePath` falls back to `filepath.EvalSymlinks`, which asks
+      the **real filesystem** — and on NTFS `skills/writing-todo` and
+      `skills/Writing-Todo` resolve to one directory. The fallback is right to say
+      so: two spellings of one file are one file. No parameter can make a
+      case-folding volume answer otherwise, because the volume is not wrong.
+
+      **So that one skips, and the skip is measured.** A helper writes
+      `case-probe` into `t.TempDir()` and stats `CASE-PROBE`; if the file is
+      there, the test skips saying the branch cannot be observed here. ⚠️ **It
+      never consults `runtime.GOOS`**, because the property belongs to the volume
+      and not the operating system — APFS can be formatted either way, so a
+      GOOS-based skip would run on a folding Mac and fail there for this same
+      reason. Mutation: a probe that never skips turns exactly that one test red
+      on Windows, which is the evidence the skip is load-bearing rather than
+      convenient.
+
+      ⚠️ **This is not the "cheaper and worse" option the entry warned about.**
+      That warning was about skipping **Windows** branches on Windows, which would
+      leave the port unexercised where it runs. This is the **Unix** branch, and a
+      Unix branch about case sensitivity cannot be exercised on a filesystem that
+      folds case. Nothing about Windows went unmeasured; the thing that cannot be
+      staged says so out loud, once, with a reason.
+
+      **Measured.** On Windows 11 Pro 26200: `make check` exits **0** — `gofmt`
+      clean, `go vet ./...` clean, every test green with one stated skip.
+      `GOOS=darwin` build and both `GOOS=linux` and `GOOS=darwin` vet stay clean,
+      and CI on ubuntu runs the skipped test for real.
+
+      **The tell.** Four tests failed together and looked like one problem. Two of
+      them were a defect in the product (`MFST-006`), one was a fixture, and one
+      was a question the machine could not be asked. ⚠️ **A red suite on a new
+      platform is a list of different problems wearing the same colour** — sorting
+      them was most of the work, and the sort is what stopped a real defect being
+      "fixed" by loosening an assertion.

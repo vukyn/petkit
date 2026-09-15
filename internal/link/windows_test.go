@@ -85,7 +85,19 @@ func TestOnWindowsALinkThatDiffersOnlyInCaseIsLeftAlone(t *testing.T) {
 
 // The sibling, and the reason the fold is not unconditional: off Windows those
 // are two different directories and the link really is stale.
+//
+// ⚠️ This one needs a case-sensitive filesystem, and that is not the same
+// requirement as "not Windows". CLI-012 found it red on Windows and the fixture
+// was not the reason: samePath falls back to filepath.EvalSymlinks, which asks
+// the real filesystem, and on NTFS the two spellings resolve to one directory.
+// The fallback is right to say so — two spellings of one file ARE one file — so
+// the injected platform cannot make this machine answer otherwise.
+//
+// ⚠️ The skip is measured, never derived from GOOS. macOS is the case that
+// makes the difference: APFS can be formatted either way, so a test that skipped
+// on runtime.GOOS would run on a folding Mac and fail there for this same reason.
 func TestEverywhereElseALinkThatDiffersOnlyInCaseIsStale(t *testing.T) {
+	requireACaseSensitiveFilesystem(t)
 	loaded, layout := caseDifferingMachine(t, "linux")
 
 	states := link.Inspect(loaded, layout)
@@ -133,4 +145,23 @@ func caseDifferingMachine(t *testing.T, goos string) (*manifest.Manifest, manife
 		t.Fatalf("symlink: %v", err)
 	}
 	return loaded, layout
+}
+
+// requireACaseSensitiveFilesystem skips the calling test unless t.TempDir() can
+// hold two names that differ only in case.
+//
+// ⚠️ It measures rather than assuming. The question is a property of the
+// volume, not of the operating system: NTFS folds, ext4 does not, and APFS is
+// whichever way it was formatted.
+func requireACaseSensitiveFilesystem(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	lower := filepath.Join(dir, "case-probe")
+	if err := os.WriteFile(lower, []byte("probe"), 0o644); err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "CASE-PROBE")); err == nil {
+		t.Skip("this filesystem folds case, so two spellings of one path are one file " +
+			"and the off-Windows branch cannot be observed here")
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/vukyn/petkit/internal/manifest"
+	"github.com/vukyn/petkit/internal/ospath"
 )
 
 // DefaultSetupPath is where setup clones when it is given no path. It is a `~`
@@ -78,7 +79,7 @@ func Setup(request SetupRequest) (SetupResult, error) {
 	if !givenPath {
 		candidate = DefaultSetupPath
 	}
-	target, err := filepath.Abs(manifest.ExpandTilde(candidate, request.Home))
+	target, err := filepath.Abs(manifest.ExpandTilde(candidate, request.Home, ospath.Current()))
 	if err != nil {
 		return SetupResult{}, fmt.Errorf("cannot resolve %s: %w", candidate, err)
 	}
@@ -125,7 +126,7 @@ func refuseIfAlreadySetUp(home string, givenPath bool, target string) error {
 	if config == nil || config.Repo == "" {
 		return nil
 	}
-	recorded := manifest.ExpandTilde(config.Repo, home)
+	recorded := manifest.ExpandTilde(config.Repo, home, ospath.Current())
 	if !hasManifest(recorded) {
 		return nil
 	}

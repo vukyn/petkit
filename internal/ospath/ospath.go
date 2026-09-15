@@ -14,6 +14,11 @@
 package ospath
 
 import (
+	// ⚠️ path, not path/filepath. This package's whole job is to answer for a
+	// platform it is told about rather than the one it was compiled for, and
+	// path/filepath cannot do that. path is separator-agnostic arithmetic on
+	// "/", which is what the Windows answers here are built out of.
+	gopath "path"
 	"runtime"
 	"strings"
 )
@@ -174,6 +179,45 @@ func IsAbsAnywhere(path string) bool {
 // package treats every non-Windows platform alike, and naming one keeps
 // IsAbsAnywhere from having to read runtime.GOOS.
 const anyUnix = "linux"
+
+// Clean is filepath.Clean with the platform as a parameter: it removes `.`,
+// resolves `..` lexically, collapses repeated separators, and spells the result
+// with the separator goos uses.
+//
+// ⚠️ CLI-012 is why this exists. filepath.Clean is compiled for the host, so a
+// Layout carrying GOOS="linux" still cleaned the Windows way when the suite ran
+// on Windows: the injected platform and path/filepath disagreed, and filepath
+// won. Four tests failed for that reason and not one was a defect in the product.
+//
+// ⚠️ A UNC path is not preserved: `\\server\share` cleans to `\server\share`,
+// because the leading double separator is collapsed like any other. petkit never
+// builds one — a manifest may not contain a backslash at all (`MFST-005`) and a
+// target must start with `~/` — so the case is documented rather than handled.
+func Clean(path, goos string) string {
+	if goos != Windows {
+		return gopath.Clean(path)
+	}
+	return FromSlash(gopath.Clean(ToSlash(path, goos)), goos)
+}
+
+// Join is filepath.Join with the platform as a parameter: the elements are
+// joined with the separator goos uses and the result is Cleaned.
+//
+// The manifest writes "/" on every machine — that is what makes it a manifest —
+// so the separator arrives here, where a target stops being text and becomes a
+// path the filesystem will be asked about.
+func Join(goos string, elements ...string) string {
+	present := make([]string, 0, len(elements))
+	for _, element := range elements {
+		if element != "" {
+			present = append(present, element)
+		}
+	}
+	if len(present) == 0 {
+		return ""
+	}
+	return Clean(strings.Join(present, "/"), goos)
+}
 
 // isDriveLetter reports whether b can name a Windows drive.
 func isDriveLetter(b byte) bool {
