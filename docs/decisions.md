@@ -683,3 +683,65 @@ the way it is. The entries carry the same `AREA-NNN` codes.
       the product and forgot the gate. **A port is not measured until the
       repository's own gate has run on the new platform** — that is how six red
       tests survived a day of being described as unit-checked.
+
+- [x] `MFST-006` ⚠️ **The absolute-source refusal asked the host, so `/x` was
+      refused on macOS and accepted on Windows.** Raised and fixed 2026-09-16,
+      out of `CLI-009`: the first run of the suite on Windows turned the test
+      red.
+
+      **What was wrong.** `validateSource` read `case filepath.IsAbs(source):`.
+      `path/filepath` is compiled for the host, and the two platforms disagree
+      in **both** directions:
+
+      | source | absolute on macOS | absolute on Windows |
+      | --- | --- | --- |
+      | `/etc/skills/x` | `true` | **`false`** |
+      | `C:/skills/x` | **`false`** | `true` |
+
+      So the same `petkit.yaml` was legal on one machine and illegal on the
+      other. ⚠️ **The harm was never an escape.** `filepath.Join(root, "/x")`
+      resolves inside the repository, so nothing reached a file it should not.
+      What broke is the one property the file exists to have.
+
+      **Why the suite did not catch it.** `TestAnAbsoluteSourceIsRefused` was
+      correct, and had passed every day of its life — it names `/etc/skills/x`,
+      and on macOS that is refused. ⚠️ **A test can be right, green, and still
+      be evidence only about the machine that ran it.** Nothing was wrong with
+      the test except where it ran.
+
+      **What shipped.** `ospath.IsAbs(path, goos)` — filepath's question with
+      the platform as a parameter, the move `internal/ospath` already exists to
+      make — and `ospath.IsAbsAnywhere(path)`, which is the form a rule about a
+      **manifest** wants: absolute on either platform is refused on both.
+      `validateSource` calls the second. The message is byte for byte what it
+      was, so `CLI-003` is untouched.
+
+      ⚠️ **`MFST-005` is this entry from the other end, two days earlier.** That
+      one refused a backslash on **every** platform because `~/..\elsewhere`
+      climbs out of home on Windows and is an ordinary file name on macOS. The
+      same argument was not carried across to the check sitting directly beside
+      it. **A rule about a travelling file that consults `path/filepath` is the
+      machine's rule, not the file's** — that is the sentence to reuse.
+
+      **Tests.** `TestIsAbsAnswersForThePlatformItIsGiven` asserts both answers
+      for eleven spellings on whichever machine runs it: the two that disagree,
+      and the two that look absolute and are not — `\x` is rooted on the current
+      drive rather than absolute, and `C:skills/x` names the drive's working
+      directory. `TestIsAbsAnywhereAsksBothPlatformsAtOnce` and
+      `TestASourceAbsoluteOnAnyPlatformIsRefused` name every spelling that is
+      absolute somewhere. The positive cases the refusals owe:
+      `TestARelativePathIsAbsoluteOnNoPlatform`, and the second half of
+      `TestASourceThatEscapesTheRepositoryIsRefused`, which still accepts
+      `skills/nested/../writing-todo`.
+
+      ⚠️ **Mutation-checked, and the mutation said something useful.** Replacing
+      the guard with `case false:` turns three tests red — but `C:\skills\x` and
+      `\server\share\x` stay refused even then, because they are caught by
+      `MFST-005`'s backslash rule. The two guards overlap on purpose and the
+      test names which one owns which spelling.
+
+      **Measured where the bug was.** On Windows 11 Pro 26200, before:
+      `internal/manifest` red on `TestAnAbsoluteSourceIsRefused` and
+      `TestAllProblemsAreReportedTogether`. After: both green, `gofmt` clean,
+      `go vet ./...` clean, and `GOOS=darwin` build and `GOOS=linux` vet still
+      clean. The package's three remaining failures are `CLI-012`, not this.

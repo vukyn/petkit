@@ -55,7 +55,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `MFST-001` | done | The manifest and its validation |
 | `MFST-004` | done | `~/` is a prefix, not a fence — `~/../elsewhere` passed validation and only `doctor` objected, after `sync` had already made the link. Moved into `validateTarget`; doctor's branch deleted as unreachable |
 | `MFST-005` | done | A backslash in a target or source escaped the home directory on Windows and passed validation on macOS; refused everywhere, and the `/`→separator conversion is now explicit and watchable from here |
-| `MFST-006` | open | The absolute-source refusal is `filepath.IsAbs`, so `/x` as a source is refused on macOS and accepted on Windows — `MFST-005`'s machine-specific manifest, from the other end |
+| `MFST-006` | done | The absolute-source refusal asked `filepath.IsAbs`, so `/x` was refused on macOS and accepted on Windows: `ospath.IsAbsAnywhere` now asks both platforms, and a rule about a travelling file stops consulting the machine it runs on |
 | `MFST-002` | open | `kind:` is decorative — nothing behaves differently per kind, so it is either a rule or a comment |
 | `SETT-001` | done | The settings fragment and its merge |
 | `SETT-002` | done | Nothing noticed settings drift until it was asked: `status` now carries one line saying whether the live file is in step with the fragment, drifted (and in how many keys), or absent |
@@ -71,7 +71,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-002` | open | A binary can now clone itself a repository, but `check` still fails without one — what is left is whether it should answer from the tags API instead |
 | `CLI-010` | done | The resolution was invisible: `status`, `sync`, `doctor` and `check` now open with which repository they resolved and how, and say both when the walked-up one is not the one `init` recorded |
 | `CLI-011` | open | Every CLI test asserts with `strings.Contains` over the whole buffer, so a brand-new first line was invisible to all of them and a line going missing would be too |
-| `CLI-012` | open | `make check` cannot pass on Windows: 26 files fail `gofmt` on a CRLF checkout (no `.gitattributes`), and four tests inject a platform while `path/filepath` and NTFS answer for the host |
+| `CLI-012` | open | `make check` could not pass on Windows. The line endings are fixed — `.gitattributes` pins LF and `gofmt` is clean — but four tests still inject a platform while `path/filepath` and NTFS answer for the host |
 | `CLI-009` | done | Run on a real Windows 11 machine at last. Every behaviour the port claimed held — an idempotent second `sync` above all — and the run found three things nothing on macOS could: `LINK-006`, `MFST-006` and `CLI-012` |
 | `DOC-001` | done | The fourteen stale copies were not shadowing anything — the plugin was installed project-scoped to another project and did not load here at all. Installed at user scope, the thirteen copies backed up and removed |
 | `LINK-003` | refused | Installing by copy instead of by symlink |
@@ -348,64 +348,28 @@ defect fixed in `internal/link` is still `SETT`.
       → `internal/link/doctor.go` (`brokenSymlink`), `internal/link/link.go`,
       `docs/decisions.md` § `CLI-009`.
 
-- [ ] `MFST-006` ⚠️ **The absolute-source refusal is `filepath.IsAbs`, so a
-      source spelled `/x` is refused on macOS and accepted on Windows — the
-      machine-specific manifest `MFST-005` was raised to prevent, in the other
-      direction.** Raised 2026-09-15 by the Windows run (`CLI-009`), which ran
-      the suite on Windows for the first time and turned this test red.
+- [ ] `CLI-012` ⚠️ **`make check` could not pass on Windows, for two reasons
+      that have nothing to do with each other — and it had never been run there
+      at all.** Raised 2026-09-15 by the Windows run (`CLI-009`). ⚠️ **Reason one
+      shipped 2026-09-16; this entry now stands on reason two alone, and the gate
+      is still red.**
 
-      **What is wrong.** `validateSource` in `internal/manifest/manifest.go`
-      reads `case filepath.IsAbs(source):`. `path/filepath` is bound to `GOOS`
-      at compile time: `filepath.IsAbs("/also-absolute")` is **`true`** on macOS
-      and **`false`** on Windows, where absolute means a drive letter or a UNC
-      path. On Windows the guard does not fire, `filepath.Clean` turns the value
-      into `\also-absolute`, the `..` check has nothing to object to, and the
-      item is **accepted**.
+      **Reason one — FIXED. gofmt failed on all 26 Go files, and the only
+      difference was `\r`.** The repository carried no `.gitattributes`, so a
+      checkout on a machine with `core.autocrlf=true` — the Git for Windows
+      default — wrote every file CRLF. `gofmt` normalises to LF and therefore
+      reported every file as unformatted. `gofmt -d internal/version/version.go`
+      was 134 changed lines and **every one of them differed only by a trailing
+      `\r`**. ⚠️ The gate was not wrong here; the checkout was. **What shipped:**
+      `.gitattributes` carrying `* text=auto eol=lf`, and the working tree
+      renormalised in a commit of its own — `gofmt -l .` has been empty on
+      Windows since. ⚠️ That commit rewrote the line endings of every tracked
+      file, which is why it was kept alone; a later change to that line owes the
+      same treatment.
 
-      **The evidence.** `go test ./... -count=1` on Windows 11 Pro 26200:
-
-      | test | says | why |
-      | --- | --- | --- |
-      | `TestAnAbsoluteSourceIsRefused` | `an absolute source was accepted` | the guard did not fire |
-      | `TestAllProblemsAreReportedTogether` | `reported 2 problems, want 3` | the same item, counted once fewer |
-
-      Both pass on macOS. ⚠️ **The suite was never the thing that caught this** —
-      it was written correctly and ran only where the bug is absent.
-
-      ⚠️ **The harm is not an escape; it is the manifest becoming
-      machine-specific.** `filepath.Join(root, "/also-absolute")` resolves to
-      `root\also-absolute`, still inside the repository, so nothing reaches a
-      file it should not. What breaks is the property `petkit.yaml` exists to
-      have: the same file is valid on one machine and refused on another, which
-      is exactly what `MFST-005` refused a backslash for. **The two are the same
-      rule seen from opposite ends** — one spelling Windows accepts and macOS
-      does not, one spelling macOS accepts and Windows does not.
-
-      **What it wants.** A refusal that does not consult the host: a leading `/`
-      is refused for a source on **every** platform, the way `backslashProblem`
-      already refuses `\` on every platform — with the same comment saying the
-      manifest travels. ⚠️ And ask the same question of every other
-      `filepath.IsAbs` and `filepath.Clean` in validation before closing: this
-      one was found because a test happened to cover it.
-
-      → `internal/manifest/manifest.go` (`validateSource`, beside
-      `backslashProblem`), `TestAnAbsoluteSourceIsRefused`.
-
-- [ ] `CLI-012` ⚠️ **`make check` cannot pass on Windows, for two reasons that
-      have nothing to do with each other — and it has never been run there until
-      now.** Raised 2026-09-15 by the Windows run (`CLI-009`).
-
-      **Reason one: gofmt fails on all 26 Go files, and the only difference is
-      `\r`.** The repository carries no `.gitattributes`, so a checkout on a
-      machine with `core.autocrlf=true` — the Git for Windows default — writes
-      every file CRLF. `gofmt` normalises to LF and therefore reports every file
-      as unformatted. `gofmt -d internal/version/version.go` is 134 changed
-      lines and **every one of them differs only by a trailing `\r`**. ⚠️ The
-      gate is not wrong here; the checkout is. Running `make fmt` would rewrite
-      all 26 files to LF and hand the owner a 26-file diff on a clean tree.
-
-      **Reason two: six tests fail, and four of them fail because the platform
-      is a parameter but `path/filepath` is not.**
+      **Reason two — OPEN. Four tests fail because the platform is a parameter
+      but `path/filepath` is not.** They were six until `MFST-006` closed: two of
+      those were a real defect in the product and are gone. These four are not.
 
       | test | says |
       | --- | --- |
@@ -424,10 +388,11 @@ defect fixed in `internal/link` is still `SETT`.
       fourth fails because NTFS resolved a differently-cased path the injected
       platform was told to treat as a different file.
 
-      ⚠️ **The other two failures are not this.** `TestAnAbsoluteSourceIsRefused`
-      and `TestAllProblemsAreReportedTogether` are `MFST-006`, a real defect in
-      the product. Do not fix them here, and do not fix them by loosening the
-      assertion.
+      ⚠️ **Two other failures were never this, and they are already gone.**
+      `TestAnAbsoluteSourceIsRefused` and `TestAllProblemsAreReportedTogether`
+      were `MFST-006`, a real defect in the product, fixed 2026-09-16. The four
+      above are not defects in the product and **must not** be fixed by loosening
+      an assertion.
 
       **What has to be decided, and it is a design question.** Either the
       cross-platform tests build their fixture paths through the injected
@@ -438,14 +403,20 @@ defect fixed in `internal/link` is still `SETT`.
       option is cheaper and worse**: it would leave the Windows branches
       unexercised on Windows, which is the state `CLI-009` existed to end.
 
-      **Why it is a sweep and not a step.** Nothing may claim "`make check` is
-      green" on Windows until both halves land, and the `.gitattributes` half
-      rewrites every Go file in the tree — so it wants its own commit, before
-      anything else touches them.
+      ⚠️ **`MFST-006` is a worked example of the first option and should be read
+      before choosing.** It moved one question (`is this absolute?`) out of
+      `path/filepath` and into `ospath` with the platform as an argument, and the
+      test that resulted asserts both platforms' answers on whichever machine
+      runs it. `ExpandTilde` is the same shape of problem, one size up.
 
-      → `.gitattributes` (absent), `Makefile` § `check`,
-      `internal/manifest/manifest.go` (`ExpandTilde`), `internal/ospath`,
-      `internal/link/windows_test.go`, `internal/manifest/layout_test.go`.
+      ⚠️ **Nothing may claim "`make check` is green on Windows" while this entry
+      is open.** Half the reason is gone and the gate is still red; the honest
+      sentence until reason two lands is "gofmt is clean and four tests fail".
+
+      → `.gitattributes` (shipped), `Makefile` § `check`,
+      `internal/manifest/manifest.go` (`ExpandTilde`), `internal/ospath`
+      (`IsAbs` is the pattern), `internal/link/windows_test.go`,
+      `internal/manifest/layout_test.go`.
 
 ## Decided against — do not re-raise
 

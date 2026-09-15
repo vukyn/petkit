@@ -178,6 +178,33 @@ items:
 	}
 }
 
+// MFST-006. ⚠️ The test above is not evidence on its own, and believing it was
+// cost a release: it names one Unix spelling, and a Unix spelling was refused
+// on macOS by the host's own filepath.IsAbs while being accepted on Windows.
+// Every spelling that is absolute *somewhere* is named here, so the answer
+// cannot come from the machine running the suite.
+//
+// Its positive case is TestASourceThatEscapesTheRepositoryIsRefused above: a
+// relative source, `..` and all, is still accepted.
+func TestASourceAbsoluteOnAnyPlatformIsRefused(t *testing.T) {
+	for _, source := range []string{
+		"/etc/skills/x",    // absolute on Unix; filepath.IsAbs says no on Windows
+		"C:/skills/x",      // absolute on Windows; filepath.IsAbs says no on Unix
+		`C:\skills\x`,      // the same, spelled the way Windows spells it
+		`\\server\share\x`, // a UNC share
+	} {
+		_, err := parse(t, "version: 1\nitems:\n  - id: skill/absolute\n"+
+			"    source: "+source+"\n    target: ~/.claude/skills/x\n")
+		if err == nil {
+			t.Errorf("source %q was accepted", source)
+			continue
+		}
+		if !strings.Contains(err.Error(), "skill/absolute") {
+			t.Errorf("source %q: error does not name the item: %v", source, err)
+		}
+	}
+}
+
 func TestAnUnknownVersionIsRefused(t *testing.T) {
 	_, err := parse(t, strings.Replace(oneGoodItem, "version: 1", "version: 7", 1))
 	if err == nil {
