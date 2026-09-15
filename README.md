@@ -42,11 +42,14 @@ nothing else:
 ```
 petkit: cannot find the petkit repository: no petkit.yaml above /tmp,
 PETKIT_HOME is not set, and nothing is recorded in ~/.config/petkit/config.json —
-run `petkit init /path/to/petkit` once, or run petkit from inside the repository
+run `petkit setup` if this machine has no clone yet, `petkit init /path/to/petkit`
+once if it has one, or run petkit from inside the repository
 ```
 
-`petkit setup` is the answer to that message on a machine that has no clone at
-all; `petkit init <path>` is the answer on a machine that does.
+⚠️ The sentence names which answer is for which machine, so this paragraph does
+not have to. It used to name `petkit init` alone — the answer for a machine that
+already has a clone — which meant the first thing a brand-new machine read was
+the one instruction that did not apply to it.
 
 `petkit sync` makes `~/.claude` match `petkit.yaml`. Nothing is copied: each
 target becomes a symlink into this repository, so **editing a skill here is

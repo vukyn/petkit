@@ -68,7 +68,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `CLI-005` | done | `petkit setup` clones the repository this binary was built from, records it, and reports what `sync` would do — install, one command, done |
 | `CLI-006` | done | `CLAUDE_CONFIG_DIR` is honoured — petkit hard-coded `~/.claude`, so a machine that sets it was having everything installed where nothing reads it. Wrong on every OS, not only Windows |
 | `CLI-007` | done | A missing git said `executable file not found in %PATH%`; it now names git and says what needs it |
-| `CLI-002` | open | A binary can now clone itself a repository, but `check` still fails without one — what is left is whether it should answer from the tags API instead |
+| `CLI-002` | open | The not-found sentence now names all three ways out, `petkit setup` included. What is left is one question: should `check` answer "is there a newer tag" from the GitHub tags API with no clone at all |
 | `CLI-010` | done | The resolution was invisible: `status`, `sync`, `doctor` and `check` now open with which repository they resolved and how, and say both when the walked-up one is not the one `init` recorded |
 | `CLI-011` | open | Every CLI test asserts with `strings.Contains` over the whole buffer, so a brand-new first line was invisible to all of them and a line going missing would be too |
 | `CLI-012` | open | `make check` could not pass on Windows. The line endings are fixed — `.gitattributes` pins LF and `gofmt` is clean — but four tests still inject a platform while `path/filepath` and NTFS answer for the host |
@@ -210,27 +210,39 @@ defect fixed in `internal/link` is still `SETT`.
       fresh binary against a disposable `HOME` reports `checkout on v0.2.0` a
       second after setup returns. The install story is closed; this entry is not.
 
-      **What is left.** `check`, `sync`, `status` and `doctor` on a machine with
-      no repository *and* no setup still get:
+      **Half of what was left is gone (2026-09-16).** `check`, `sync`, `status`
+      and `doctor` on a machine with no repository *and* no setup used to get a
+      sentence naming `petkit init` alone — the answer for a machine that already
+      has a clone. ⚠️ **The first thing a brand-new machine read was the one
+      instruction that did not apply to it.** It now reads:
 
       ```
       petkit: cannot find the petkit repository: no petkit.yaml above /tmp,
       PETKIT_HOME is not set, and nothing is recorded in
-      ~/.config/petkit/config.json — run `petkit init /path/to/petkit` once, or
-      run petkit from inside the repository
+      ~/.config/petkit/config.json — run `petkit setup` if this machine has no
+      clone yet, `petkit init /path/to/petkit` once if it has one, or run petkit
+      from inside the repository
       ```
 
-      ⚠️ Two things that message does not yet say, and they are the open work:
-      it names `petkit init` but not `petkit setup`, which is now the answer for
-      a machine that has no clone **at all** — and the original question is
-      untouched: should `check` answer "is there a newer tag" **without** a
-      clone, from the GitHub tags API? It is the one question a machine can
-      sensibly ask before it has cloned anything, and setup did not answer it
-      because setup's answer is "clone first".
+      Three ways out, each saying which machine it is for. Mutation: dropping
+      `petkit setup` from the sentence turns
+      `TestTheMissingRepositoryErrorNamesEveryWayOut` red. `README.md` quotes the
+      new sentence and no longer needs the paragraph that explained what the
+      message would not say.
 
-      **What closing it needs.** Either `check` falls back to the GitHub tags API
-      when there is no repository, or its error names both ways out in one
-      sentence — which is cheap and might be the whole answer.
+      **What is left is one question, and it is the one the entry was raised on.**
+      Should `check` answer "is there a newer tag" **without** a clone, from the
+      GitHub tags API? A binary knows its own version (`debug.BuildInfo`), so
+      "am I behind?" is answerable with no repository at all — and it is the one
+      question a machine can sensibly ask before it has cloned anything. `CLI-005`
+      did not answer it, because setup's answer is "clone first".
+
+      ⚠️ **It is a real trade, not a chore.** It would put a network call, a
+      GitHub dependency, an offline path and a rate limit into a tool whose whole
+      design is local, small and dependency-shy — for a question `petkit setup`
+      makes moot in one command. **Closing this entry means deciding that the
+      message is the whole answer**, and that decision belongs in
+      § *Decided against* with its reasoning, not in a quiet tick.
 
 - [ ] `CLI-011` ⚠️ **Every CLI test asserts by searching the whole buffer, so
       the suite cannot see a line arrive or leave.** Raised 2026-09-14 out of
