@@ -584,3 +584,102 @@ the way it is. The entries carry the same `AREA-NNN` codes.
       appear; its positive sibling runs the same command from a neutral working
       directory and asserts the second half is **not** printed (mutation:
       comparing the root with itself turns it red).
+
+- [x] `CLI-009` ⚠️ **Nothing had ever run on Windows. It has now. Every behaviour
+      the port claimed held; what the run found was three defects no test on
+      macOS could have reached, one of them being that `make check` is red on
+      Windows — so the gate had never spoken there either.** Raised
+      2026-09-14 with the port that made the code correct there; closed
+      2026-09-15 on Windows 11 Pro 26200, against a machine its owner had just
+      installed from scratch.
+
+      **What the evidence was before.** `GOOS=windows GOARCH=amd64 go build ./...`
+      and `GOOS=windows go vet ./...` clean, plus a unit test for every Windows
+      branch running on macOS with the platform passed in as a parameter. That
+      was the whole of it. Compiling is not running.
+
+      **What was run, in the order the risk runs.**
+
+      | # | what | result |
+      | --- | --- | --- |
+      | 1 | `petkit setup` on a bare machine | clone at `~/.petkit`, remote correct. ⚠️ The missing-git sentence (`CLI-007`) stayed **unexercised** — git was present |
+      | 2 | `sync` with Developer Mode **off** | a real `ERROR_PRIVILEGE_NOT_HELD`, translated exactly as `LINK-004` wrote it, exit 1, no copy |
+      | 3 | `sync`, then `sync` again | `ok` for every item and `nothing to do; every item is already linked` — **no `repoint`** |
+      | 4 | `status`, `doctor` | targets shown as `~/.claude/skills/x` with forward slashes; doctor silent about petkit's own items |
+      | 5 | `CLAUDE_CONFIG_DIR` pointed elsewhere | every path redirected; `create` on the first run, `nothing to do` on the second |
+      | 6 | `petkit check` in the clone | `1 commit(s) past v0.5.0 (at abb5c31)`, tree clean — the version-is-a-git-tag rule works off a Windows `git` |
+      | 6b | ⚠️ `make check` — **not in the protocol, and the worst result of the day** | red: 26 files fail `gofmt` on a CRLF checkout and six tests fail. Raised as `CLI-012` and `MFST-006` |
+      | 7 | `settings apply` | three keys added, `settings.json.petkit-backup-20260915T230609` written beside the file, `settings diff` then said in step |
+
+      **Step 3 was the line to watch, and it was clean.** `LINK-005` exists
+      because `status` called a good link `stale` on Windows and `sync` deleted
+      and recreated it on every run. On the real filesystem the second `sync`
+      printed `nothing to do` — twice, in two different config directories.
+
+      ⚠️ **Step 2 was measured by accident, and it is the strongest result here.**
+      Developer Mode was **off** on this machine — `AllowDevelopmentWithoutDevLicense`
+      was absent from the registry — and the links already in `~/.claude` had been
+      made from an elevated shell. So the refusal fired against a genuinely
+      unprivileged process on a genuinely unprepared machine, which is the case a
+      developer's own box never produces. The message named Developer Mode and
+      Administrator and said petkit will not copy instead. Turning Developer Mode
+      on and repeating the same command created the links from an **unelevated**
+      shell, which is the positive case that refusal owes.
+
+      **The two things called unmeasurable from macOS, both now measured.**
+
+      - **`doctor`'s survey under a Windows layout.** The `os.ReadDir` → "does
+        this entry belong to an item?" wiring was unexercised because a Windows
+        layout resolved on a macOS filesystem produces paths that filesystem
+        cannot hold. Planting `~/.claude/skills/zz-not-mine` settled both halves
+        at once: doctor named **it** (`is not in the manifest; petkit leaves it
+        alone`) and stayed silent about the two items petkit had installed.
+      - **A missing source makes a broken link, not a refused one.** Predicted by
+        the port, reproduced exactly, and worse than predicted — it is now
+        `LINK-006`, with the flavour attributes and the Go, Node and PowerShell
+        readings that say what it costs.
+
+      **The three defects the run found, and why each needed a Windows machine.**
+
+      | code | what | why macOS could not find it |
+      | --- | --- | --- |
+      | `LINK-006` | a source missing at `sync` time yields a **file**-flavour symlink to a directory, which nothing repairs and a directory scan cannot see | a Unix symlink has no flavour; the kernel picks it, not a branch petkit owns |
+      | `MFST-006` | `validateSource` refuses an absolute source with `filepath.IsAbs`, which is `true` for `/x` on macOS and `false` on Windows — so the same manifest is refused there and accepted here | the test was correct and ran only where the bug is absent |
+      | `CLI-012` | `make check` is red on Windows: `gofmt` fails on all 26 files over `\r`, and four tests inject a platform while `path/filepath` and NTFS answer for the host | the gate had never been run on Windows at all |
+
+      ⚠️ **`MFST-006` is the one to read twice.** It is `MFST-005` from the other
+      end — that entry refused a backslash **on every platform** because a
+      manifest valid on one OS and refused on another is the machine-specific
+      file `petkit.yaml` may not be. The same argument was not applied to the
+      absolute-source check beside it, and the host decided the answer.
+
+      **What is still not measured, and must not be claimed.**
+
+      | thing | why not |
+      | --- | --- |
+      | the missing-git message (`CLI-007`) | git is installed here; it needs a `PATH` without it |
+      | `settings apply` over a **conflicting** value | this machine's file was missing all three keys, so step 7 was an add, not a merge over a different value |
+      | two items claiming `~/x` and `~/X` | the manifest has no such pair |
+
+      ⚠️ **The defect deliberately left open stays open.** Two items whose targets
+      differ only in case are one path on Windows and two everywhere else.
+      Validation does **not** fold case, because a manifest valid on macOS and
+      invalid on Windows is the machine-specific `petkit.yaml` the whole design
+      refuses. If it ever happens, the answer is a refusal in `validateTarget`
+      that is case-insensitive on **every** platform — not one that consults
+      `GOOS`.
+
+      **The tell, for next time.** The port made the platform a parameter, and
+      that was right — but the parameter stops at petkit's own code. ⚠️ **Below
+      it sit three authorities that answer for the host no matter what is
+      injected: `path/filepath`, the filesystem, and the kernel that decides what
+      a symlink is.** Every defect the run found is one of those three
+      contradicting the injected platform — `filepath.IsAbs` (`MFST-006`), NTFS
+      case-folding and separators (`CLI-012`), the symlink flavour (`LINK-006`).
+      That is the list to go through by hand after a port, and it is short.
+
+      ⚠️ **The protocol also missed a step, and the miss is instructive.** It
+      listed `petkit check` and not `make check`: the entry was written about
+      the product and forgot the gate. **A port is not measured until the
+      repository's own gate has run on the new platform** — that is how six red
+      tests survived a day of being described as unit-checked.
