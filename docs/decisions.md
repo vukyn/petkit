@@ -951,3 +951,53 @@ the way it is. The entries carry the same `AREA-NNN` codes.
       platform is a list of different problems wearing the same colour** — sorting
       them was most of the work, and the sort is what stopped a real defect being
       "fixed" by loosening an assertion.
+
+- [x] `CLI-014` **A dry run closes by saying nothing happened.** Raised
+      2026-09-16 by `CLI-011`'s shape table, which could not be written without
+      noticing, and closed the same day.
+
+      **What was wrong.** The closing line was suppressed on a dry run and
+      nothing replaced it, so the two dry runs had different shapes:
+
+      | `petkit sync --dry-run` | last line, before |
+      | --- | --- |
+      | with something to do | `would create  skill/x  …` — the plan, then it stops |
+      | with nothing to do | `nothing to do; every item is already linked` |
+
+      ⚠️ **The quieter case got the closing sentence and the louder one did
+      not.** A reader who scrolls to the bottom of a plan found the plan simply
+      stopping. The `would ` prefix on each item line did say it, but only to
+      someone reading every line — and the count a real `sync` gives was missing
+      too, so there was nothing to compare the two runs by.
+
+      **What shipped.** One more branch and three symmetric closings:
+
+      ```
+      sync --dry-run, something to do   2 change(s) would be made; nothing was changed
+      sync,           something to do   2 change(s)
+      either,         nothing to do     nothing to do; every item is already linked
+      ```
+
+      Mutation: deleting the new line turns three tests red.
+
+      ⚠️ **It broke two tests, and how it broke them is the part worth keeping.**
+      `TestDryRunAgreesWithTheRealRunAboutConflicts` and
+      `TestSyncDryRunParsesAndWritesNothing` asserted
+      `!strings.Contains(out, "change(s)")` as a proxy for "the dry run did not
+      claim to have changed something". The new line contains `change(s)` **while
+      saying in so many words that nothing was changed**, so the proxy failed a
+      message that is the opposite of what it was guarding.
+
+      They now assert the thing they meant: the **last line** ends with
+      `nothing was changed`. That is `CLI-011`'s lesson arriving from the other
+      direction — the entry was about assertions too weak to see a line go
+      missing, and this is an assertion strong in the wrong place, failing a line
+      that arrived. **A proxy is a claim about the output's vocabulary; what the
+      test wanted was a claim about its shape.**
+
+      **The tell.** This entry exists because a shape table was written. Nobody
+      had noticed the asymmetry in two days of reading this output, and writing
+      down what each command prints made it impossible not to see. ⚠️ **Enumerating
+      what a thing does is a different activity from using it, and it finds
+      different bugs** — that is most of the argument for `CLI-011` having been
+      worth doing.

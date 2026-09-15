@@ -550,9 +550,18 @@ func syncOf(environment environment, loaded *manifest.Manifest, dryRun bool) err
 		return err
 	}
 
-	if result.Changed == 0 && len(result.Refused) == 0 {
+	// ⚠️ A dry run closes with a sentence of its own rather than with nothing.
+	// It used to print no closing line at all when it had something to do, while
+	// printing one when it had nothing to do — so the quieter case got the
+	// closing sentence and the louder one did not, and a reader who scrolls to
+	// the bottom of a plan found the plan simply stopping. The `would ` prefix on
+	// each item line said it, but only to someone reading every line. CLI-014.
+	switch {
+	case result.Changed == 0 && len(result.Refused) == 0:
 		fmt.Fprintln(environment.stdout, "nothing to do; every item is already linked")
-	} else if !dryRun {
+	case dryRun:
+		fmt.Fprintf(environment.stdout, "%d change(s) would be made; nothing was changed\n", result.Changed)
+	default:
 		fmt.Fprintf(environment.stdout, "%d change(s)\n", result.Changed)
 	}
 

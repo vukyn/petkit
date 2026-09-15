@@ -172,9 +172,7 @@ func TestDryRunAgreesWithTheRealRunAboutConflicts(t *testing.T) {
 	if !strings.Contains(s.stdout.String(), "conflict") {
 		t.Errorf("the dry run did not name the conflict: %s", s.stdout.String())
 	}
-	if strings.Contains(s.stdout.String(), "change(s)") {
-		t.Errorf("the dry run claimed to have changed something: %s", s.stdout.String())
-	}
+	assertClosesAsADryRun(t, s.stdout.String())
 }
 
 // doctor exits non-zero only for a problem; the notes it prints about things
@@ -433,9 +431,7 @@ func TestSyncDryRunParsesAndWritesNothing(t *testing.T) {
 	if !strings.Contains(s.stdout.String(), "would create") {
 		t.Errorf("the flag did not reach the plan — no preview was printed: %s", s.stdout.String())
 	}
-	if strings.Contains(s.stdout.String(), "change(s)") {
-		t.Errorf("the dry run claimed to have changed something: %s", s.stdout.String())
-	}
+	assertClosesAsADryRun(t, s.stdout.String())
 	if _, err := os.Lstat(target); !os.IsNotExist(err) {
 		t.Errorf("the dry run created %s", target)
 	}
@@ -1036,5 +1032,20 @@ func TestDoctorSurveysTheClaudeConfigDir(t *testing.T) {
 	// The item petkit installed a moment ago is its own, not a stranger.
 	if strings.Contains(s.output(), "writing-todo is not in the manifest") {
 		t.Errorf("doctor called its own item unmanaged: %s", s.output())
+	}
+}
+
+// assertClosesAsADryRun checks that a dry run ends by saying nothing happened.
+//
+// ⚠️ This used to be `!strings.Contains(out, "change(s)")`, a proxy for the
+// same intent that stopped being one the moment a dry run started printing a
+// count of its own (CLI-014). The proxy would have failed a message that says
+// `nothing was changed` in so many words, which is the opposite of what it was
+// guarding. The last line is the thing actually meant.
+func assertClosesAsADryRun(t *testing.T, out string) {
+	t.Helper()
+	lines := outputLines(out)
+	if len(lines) == 0 || !strings.HasSuffix(lines[len(lines)-1], "nothing was changed") {
+		t.Errorf("a dry run must close by saying nothing happened: %s", out)
 	}
 }
