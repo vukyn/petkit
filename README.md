@@ -156,7 +156,9 @@ every machine. Today that is two skills.
   by its owner without a word.
 - **Agents, commands and repository scripts** are addressed relative to the
   repository that owns them (`$CLAUDE_PROJECT_DIR`, a Makefile variable) and
-  arrive on every machine with `git clone`.
+  arrive on every machine with `git clone` of that repository. A workspace whose
+  root is not itself a repository gets the same by making the root one, tracking
+  only its shared tooling — not by copying its agents here.
 
 The rule behind all three: **a second copy of a file that already has an owner is
 not a backup, it is a fork that nobody is watching.** `petkit.yaml` records these
