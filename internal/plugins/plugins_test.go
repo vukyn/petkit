@@ -126,7 +126,7 @@ func TestAnExtraInstalledPluginIsOnlyMentioned(t *testing.T) {
 // A machine that has never installed a plugin has no files to read, and that
 // is a normal starting point rather than an error.
 func TestLoadLiveAcceptsAMachineWithNoPluginFiles(t *testing.T) {
-	live, err := plugins.LoadLive(filepath.Join(t.TempDir(), "plugins"))
+	live, err := plugins.LoadLive(t.TempDir())
 	if err != nil {
 		t.Fatalf("a machine with no plugin files failed: %v", err)
 	}
@@ -135,22 +135,27 @@ func TestLoadLiveAcceptsAMachineWithNoPluginFiles(t *testing.T) {
 	}
 }
 
-// The shapes of the two files on a real machine, read as they are written.
+// The shapes of the three files on a real machine, read as they are written:
+// installed_plugins.json version 2 carries no enabledPlugins, and settings.json
+// does (measured 2026-11-03, after `claude plugin install` rewrote the former).
 func TestLoadLiveReadsTheRealFileShapes(t *testing.T) {
 	dir := t.TempDir()
-	write(t, filepath.Join(dir, "known_marketplaces.json"), `{
+	write(t, filepath.Join(dir, "plugins", "known_marketplaces.json"), `{
       "caveman": {
         "source": {"source": "github", "repo": "JuliusBrussee/caveman"},
         "installLocation": "/Users/someone/.claude/plugins/marketplaces/caveman",
         "lastUpdated": "2026-09-13T00:00:00.000Z"
       }
     }`)
-	write(t, filepath.Join(dir, "installed_plugins.json"), `{
-      "version": 1,
+	write(t, filepath.Join(dir, "plugins", "installed_plugins.json"), `{
+      "version": 2,
       "plugins": {
         "caveman@caveman": [{"scope": "user", "installPath": "/somewhere", "version": "15581d14007f"}]
-      },
-      "enabledPlugins": {"context-mode@context-mode": true}
+      }
+    }`)
+	write(t, filepath.Join(dir, "settings.json"), `{
+      "model": "sonnet",
+      "enabledPlugins": {"context-mode@context-mode": true, "caveman@caveman": false}
     }`)
 
 	live, err := plugins.LoadLive(dir)
@@ -164,7 +169,72 @@ func TestLoadLiveReadsTheRealFileShapes(t *testing.T) {
 		t.Errorf("installed version = %q", live.Installed["caveman@caveman"])
 	}
 	if !live.Enabled["context-mode@context-mode"] {
-		t.Error("the enabled plugin was not read")
+		t.Error("the enabled plugin in settings.json was not read")
+	}
+	if on, listed := live.Enabled["caveman@caveman"]; !listed || on {
+		t.Errorf("the disabled plugin in settings.json read as %t (listed %t)", on, listed)
+	}
+}
+
+// ⚠️ PLUG-005. A plugin settings.json enables and installed_plugins.json does
+// not mention was reported as "claude plugin enable …", which `claude` then
+// refused as already enabled. The plan must print no command for it.
+func TestAPluginEnabledInSettingsNeedsNoEnableCommand(t *testing.T) {
+	desired := &plugins.Desired{Enabled: map[string]bool{"context-mode@context-mode": true}}
+
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "settings.json"), `{"enabledPlugins": {"context-mode@context-mode": true}}`)
+	write(t, filepath.Join(dir, "plugins", "installed_plugins.json"), `{"version": 2, "plugins": {}}`)
+	live, err := plugins.LoadLive(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if plan := plugins.Build(desired, live); len(plan.Commands) != 0 {
+		t.Errorf("an enabled plugin produced commands: %v", plan.Commands)
+	}
+
+	// The positive case the refusal owes: the same plugin switched off in
+	// settings.json, and the plan does ask for it to be enabled.
+	write(t, filepath.Join(dir, "settings.json"), `{"enabledPlugins": {"context-mode@context-mode": false}}`)
+	live, err = plugins.LoadLive(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	plan := plugins.Build(desired, live)
+	if len(plan.Commands) != 1 || plan.Commands[0].Line != "claude plugin enable context-mode@context-mode" {
+		t.Errorf("a disabled plugin did not produce the enable command: %v", plan.Commands)
+	}
+}
+
+// settings.json is the source of the enabled set whenever it has the key at
+// all; the legacy key in installed_plugins.json is read only when it does not.
+func TestTheLegacyEnabledKeyIsAFallbackOnly(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "plugins", "installed_plugins.json"), `{
+      "version": 1,
+      "plugins": {},
+      "enabledPlugins": {"legacy@market": true}
+    }`)
+
+	write(t, filepath.Join(dir, "settings.json"), `{"model": "sonnet"}`)
+	live, err := plugins.LoadLive(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !live.Enabled["legacy@market"] {
+		t.Error("with no enabledPlugins in settings.json, the legacy key was not read")
+	}
+
+	write(t, filepath.Join(dir, "settings.json"), `{"enabledPlugins": {"current@market": true}}`)
+	live, err = plugins.LoadLive(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !live.Enabled["current@market"] {
+		t.Error("the enabled set in settings.json was not read")
+	}
+	if _, listed := live.Enabled["legacy@market"]; listed {
+		t.Error("the legacy key was read although settings.json has enabledPlugins")
 	}
 }
 
@@ -195,8 +265,9 @@ func TestTheRepositoryCaptureIsSelfConsistent(t *testing.T) {
 
 // liveMachine writes the two files a real machine keeps in ~/.claude/plugins,
 // in the shape the real ones have — including every field the capture must not
-// carry across. The paths in it are the thing under test, so they are named
-// constants and asserted against by name.
+// carry across — and the settings.json beside them that holds enabledPlugins.
+// It returns the config directory. The paths in it are the thing under test, so
+// they are named constants and asserted against by name.
 const (
 	liveProjectPath     = "/Users/someone/work/a-clients-private-repo"
 	liveInstallPath     = "/Users/someone/.claude/plugins/cache/caveman"
@@ -205,7 +276,12 @@ const (
 
 func liveMachine(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	configDir := t.TempDir()
+	write(t, filepath.Join(configDir, "settings.json"), `{
+      "model": "sonnet",
+      "enabledPlugins": {"context-mode@context-mode": true}
+    }`)
+	dir := filepath.Join(configDir, "plugins")
 	write(t, filepath.Join(dir, "known_marketplaces.json"), `{
       "caveman": {
         "source": {"source": "github", "repo": "JuliusBrussee/caveman"},
@@ -235,10 +311,9 @@ func liveMachine(t *testing.T) string {
           "installPath": "`+liveInstallPath+`",
           "version": "1.0.169"
         }]
-      },
-      "enabledPlugins": {"context-mode@context-mode": true}
+      }
     }`)
-	return dir
+	return configDir
 }
 
 // ⚠️ This is the test PLUG-004 exists for. The obvious way to rebuild
@@ -422,6 +497,9 @@ func TestAVersionIsAReadingAndTheInstallCommandNeverPinsIt(t *testing.T) {
 
 func write(t *testing.T, path, body string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}

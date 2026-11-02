@@ -489,6 +489,36 @@ the way it is. The entries carry the same `AREA-NNN` codes.
       and every line that shows one must call it a reading (mutation: restoring
       the old "the manifest captured version %s" wording turns it red).
 
+- [x] `PLUG-005` **`plugins plan` asked to enable a plugin that was enabled.**
+      Found and closed 2026-11-03.
+
+      **What happened.** On Windows, right after `claude plugin install
+      ui-ux-pro-max@ui-ux-pro-max-skill`, `plugins plan` began printing
+      `claude plugin enable context-mode@context-mode` ("the manifest has it
+      enabled"). Running it failed: `Plugin "context-mode@context-mode" is
+      already enabled`. The same plan had not printed that line minutes earlier.
+
+      **Why.** petkit read the enabled set from `enabledPlugins` in
+      `~/.claude/plugins/installed_plugins.json`. The file the install left
+      behind is `"version": 2` and has no such key; Claude Code keeps it in
+      `~/.claude/settings.json` (`enabledPlugins`, where the plugin was `true`).
+      With nothing read, every enabled plugin in the manifest looked switched off.
+
+      **What shipped.** `LoadLive` and `Capture` take the config directory
+      (`Layout.Config`, so `CLAUDE_CONFIG_DIR` still holds) and `readLiveFiles`
+      reads `settings.json` as a third file, declaring only `enabledPlugins` —
+      no other key of that file is read. The `installed_plugins.json` key is
+      kept as a fallback for a `settings.json` without `enabledPlugins` at all,
+      never merged with it. Tests: the real version-2 shape, the plan printing
+      no command for an enabled plugin plus its positive case (disabled in
+      `settings.json` → the enable line), and the fallback in both directions.
+      Mutation: taking the legacy key as the source turns four tests red.
+
+      ⚠️ A capture on this machine will now record the whole `enabledPlugins`
+      map from `settings.json`, which can list more plugins than the one the
+      committed file has — that is the file catching up, not a leak: the map
+      holds ids and booleans only.
+
 - [x] `SETT-002` **Nothing noticed when a machine's `settings.json` drifted.**
       Closed 2026-09-14.
 

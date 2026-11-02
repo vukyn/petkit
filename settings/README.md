@@ -15,7 +15,8 @@ The marketplaces and plugins a machine should have. `petkit plugins plan` reads 
 and prints the `claude plugin …` commands; it never installs.
 
 **Rebuild it with `petkit plugins capture`** — which reads the live
-`~/.claude/plugins/{known_marketplaces.json,installed_plugins.json}`, writes
+`~/.claude/plugins/{known_marketplaces.json,installed_plugins.json}` and the
+`enabledPlugins` map of `~/.claude/settings.json` (`PLUG-005`), writes
 exactly the id, scope and version per plugin plus each marketplace's source,
 prints what moved, and leaves a timestamped backup. A run that finds nothing
 changed writes nothing at all.

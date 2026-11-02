@@ -23,8 +23,8 @@ import (
 // It is not a merge. What this machine has replaces what the file said, because
 // the file's whole claim is "this is what a machine has" — see Changes for what
 // the difference is reported as.
-func Capture(pluginsDir string) (*Desired, error) {
-	known, installed, err := readLiveFiles(pluginsDir)
+func Capture(configDir string) (*Desired, error) {
+	known, installed, enabled, err := readLiveFiles(configDir)
 	if err != nil {
 		return nil, err
 	}
@@ -59,8 +59,8 @@ func Capture(pluginsDir string) (*Desired, error) {
 		return captured.Plugins[i].ID < captured.Plugins[j].ID
 	})
 
-	for id, enabled := range installed.EnabledPlugins {
-		captured.Enabled[id] = enabled
+	for id, on := range enabled {
+		captured.Enabled[id] = on
 	}
 
 	return captured, nil

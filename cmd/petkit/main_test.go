@@ -673,9 +673,14 @@ func TestStatusSaysWhetherTheSettingsFileIsInStep(t *testing.T) {
 }
 
 // writeLivePlugins is a machine that has installed plugins: the two files
-// ~/.claude/plugins holds, with the fields a capture must not carry across.
+// ~/.claude/plugins holds, with the fields a capture must not carry across, and
+// the enabledPlugins map ~/.claude/settings.json holds (PLUG-005).
 func (s *sandbox) writeLivePlugins(t *testing.T, version string) {
 	t.Helper()
+	write(t, filepath.Join(s.home, ".claude", "settings.json"), `{
+      "model": "sonnet",
+      "enabledPlugins": {"context-mode@context-mode": true}
+    }`)
 	dir := filepath.Join(s.home, ".claude", "plugins")
 	write(t, filepath.Join(dir, "known_marketplaces.json"), `{
       "context-mode": {
@@ -684,7 +689,7 @@ func (s *sandbox) writeLivePlugins(t *testing.T, version string) {
       }
     }`)
 	write(t, filepath.Join(dir, "installed_plugins.json"), `{
-      "version": 1,
+      "version": 2,
       "plugins": {
         "context-mode@context-mode": [{
           "scope": "project",
@@ -692,8 +697,7 @@ func (s *sandbox) writeLivePlugins(t *testing.T, version string) {
           "installPath": "/Users/someone/.claude/plugins/cache/context-mode",
           "version": "`+version+`"
         }]
-      },
-      "enabledPlugins": {"context-mode@context-mode": true}
+      }
     }`)
 }
 
