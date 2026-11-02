@@ -11,10 +11,6 @@
       "repo": "JuliusBrussee/caveman",
       "source": "github"
     },
-    "claude-code-warp": {
-      "repo": "warpdotdev/claude-code-warp",
-      "source": "github"
-    },
     "claude-plugins-official": {
       "repo": "anthropics/claude-plugins-official",
       "source": "github"
@@ -32,12 +28,7 @@
     {
       "id": "caveman@caveman",
       "scope": "user",
-      "version": "15581d14007f"
-    },
-    {
-      "id": "clangd-lsp@claude-plugins-official",
-      "scope": "user",
-      "version": "1.0.0"
+      "version": "4.0.1"
     },
     {
       "id": "context-mode@context-mode",
@@ -50,29 +41,14 @@
       "version": "1.0.0"
     },
     {
-      "id": "mongodb@claude-plugins-official",
-      "scope": "user",
-      "version": "1.2.1"
-    },
-    {
-      "id": "rust-analyzer-lsp@claude-plugins-official",
-      "scope": "user",
-      "version": "1.0.0"
-    },
-    {
       "id": "superpowers@claude-plugins-official",
       "scope": "user",
-      "version": "6.3.0"
+      "version": "7.0.0"
     },
     {
       "id": "ui-ux-pro-max@ui-ux-pro-max-skill",
       "scope": "user",
-      "version": "2.13.0"
-    },
-    {
-      "id": "warp@claude-code-warp",
-      "scope": "user",
-      "version": "2.0.0"
+      "version": "2.15.0"
     }
   ]
 }
