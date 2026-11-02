@@ -78,17 +78,18 @@ func LoadDesired(path string) (*Desired, error) {
 	return &desired, nil
 }
 
-// LoadLive reads a machine's plugin directory. A missing file means a machine
-// that has never installed anything, which is a normal starting point and not
-// an error.
-func LoadLive(pluginsDir string) (*Live, error) {
+// LoadLive reads a machine's plugin state out of its Claude config directory
+// (~/.claude, or CLAUDE_CONFIG_DIR): the two files under plugins/, and the
+// enabledPlugins map in settings.json. A missing file means a machine that has
+// never installed anything, which is a normal starting point and not an error.
+func LoadLive(configDir string) (*Live, error) {
 	live := &Live{
 		Marketplaces: map[string]string{},
 		Installed:    map[string]string{},
 		Enabled:      map[string]bool{},
 	}
 
-	known, installed, err := readLiveFiles(pluginsDir)
+	known, installed, enabled, err := readLiveFiles(configDir)
 	if err != nil {
 		return nil, err
 	}
@@ -102,8 +103,8 @@ func LoadLive(pluginsDir string) (*Live, error) {
 		}
 		live.Installed[id] = version
 	}
-	for id, enabled := range installed.EnabledPlugins {
-		live.Enabled[id] = enabled
+	for id, on := range enabled {
+		live.Enabled[id] = on
 	}
 	return live, nil
 }
@@ -135,23 +136,49 @@ type liveInstalled struct {
 		Scope   string `json:"scope"`
 		Version string `json:"version"`
 	} `json:"plugins"`
+	// EnabledPlugins is a LEGACY location, read only when settings.json has no
+	// enabledPlugins key at all (PLUG-005). The installed_plugins.json that
+	// `claude plugin install` writes today (version 2) does not carry it.
 	EnabledPlugins map[string]bool `json:"enabledPlugins"`
 }
 
-// readLiveFiles reads both of a machine's plugin files. It is one function
-// because both readers — the plan's and the capture's — must agree about what
-// the files contain; two readers is two answers.
-func readLiveFiles(pluginsDir string) (map[string]liveMarketplace, liveInstalled, error) {
+// liveSettings is ~/.claude/settings.json, as much of it as petkit's plugin
+// code reads. ⚠️ This is where `claude plugin enable/disable` records its
+// answer, and where Claude Code reads it from (PLUG-005). Every other key of
+// the file is undeclared here and never read.
+type liveSettings struct {
+	EnabledPlugins map[string]bool `json:"enabledPlugins"`
+}
+
+// readLiveFiles reads a machine's plugin state. It is one function because both
+// readers — the plan's and the capture's — must agree about what the files
+// contain; two readers is two answers.
+//
+// ⚠️ The enabled set comes from settings.json. Reading it out of
+// installed_plugins.json alone made `plugins plan` tell a machine to enable a
+// plugin `claude` already reported as enabled, once `claude plugin install`
+// rewrote that file without the key (PLUG-005).
+func readLiveFiles(configDir string) (map[string]liveMarketplace, liveInstalled, map[string]bool, error) {
 	var known map[string]liveMarketplace
 	var installed liveInstalled
+	var settings liveSettings
 
+	pluginsDir := filepath.Join(configDir, "plugins")
 	if err := readJSONIfPresent(filepath.Join(pluginsDir, "known_marketplaces.json"), &known); err != nil {
-		return nil, installed, err
+		return nil, installed, nil, err
 	}
 	if err := readJSONIfPresent(filepath.Join(pluginsDir, "installed_plugins.json"), &installed); err != nil {
-		return nil, installed, err
+		return nil, installed, nil, err
 	}
-	return known, installed, nil
+	if err := readJSONIfPresent(filepath.Join(configDir, "settings.json"), &settings); err != nil {
+		return nil, installed, nil, err
+	}
+
+	enabled := settings.EnabledPlugins
+	if enabled == nil {
+		enabled = installed.EnabledPlugins
+	}
+	return known, installed, enabled, nil
 }
 
 func readJSONIfPresent(path string, into any) error {

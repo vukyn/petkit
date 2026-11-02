@@ -62,6 +62,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `PLUG-001` | done | The plugin list and `plugins plan` |
 | `PLUG-004` | done | `petkit plugins capture` reproduces `settings/plugins.json` from the live files, reduced to `{id, scope, version}` plus each marketplace's source — and a test feeds it a `projectPath` and searches the written bytes for it |
 | `PLUG-002` | done | `claude plugin install` has no version flag, so a version cannot be pinned: the field is relabelled **last seen** — a reading a machine can notice it is behind, not a target |
+| `PLUG-005` | done | `plugins plan` read the enabled set out of `installed_plugins.json`, which `claude plugin install` rewrites without it, and printed `claude plugin enable` for a plugin `claude` called already enabled: it now reads `settings.json`'s `enabledPlugins`, the legacy key only as a fallback |
 | `CLI-001` | done | The command surface and the version rule |
 | `CLI-003` | done | The command surface moved to `urfave/cli/v3` — every documented message byte-identical, and an undefined flag is now refused instead of silently ignored |
 | `CLI-004` | done | `petkit version` printed a whole pseudo-version on a dirty tree: `+dirty` is build metadata and the anchored pattern did not allow for it |
@@ -131,6 +132,15 @@ defect fixed in `internal/link` is still `SETT`.
   `plugins plan` that show a version — and kept, because a recorded reading is
   how a machine notices it is running something older. ⚠️ No pinning mechanism
   was invented and the field was not dropped.
+
+- `PLUG-005` **The enabled set comes from `settings.json`.** Measured
+  2026-11-03 on Windows: after `claude plugin install`, `installed_plugins.json`
+  (version 2) held no `enabledPlugins`, `plugins plan` printed
+  `claude plugin enable context-mode@context-mode`, and `claude` refused it as
+  already enabled — the answer sits in `~/.claude/settings.json`. `LoadLive` and
+  `Capture` now take the config directory and read `enabledPlugins` there; the
+  key in `installed_plugins.json` is read only when `settings.json` has none.
+  Mutation: reading the legacy key first turns four tests red.
 
 - `SETT-002` **`status` notices settings drift.** One line at the end of
   `petkit status`: the live settings file is `in step with the fragment`,

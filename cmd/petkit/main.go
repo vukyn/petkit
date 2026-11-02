@@ -681,7 +681,7 @@ func commandPluginsPlan(environment environment) error {
 	if err != nil {
 		return err
 	}
-	live, err := plugins.LoadLive(filepath.Join(environment.layout.Config, "plugins"))
+	live, err := plugins.LoadLive(environment.layout.Config)
 	if err != nil {
 		return err
 	}
@@ -716,7 +716,7 @@ func commandPluginsCapture(environment environment) error {
 	}
 	path := pluginsManifestPath(location.Root)
 
-	captured, err := plugins.Capture(filepath.Join(environment.layout.Config, "plugins"))
+	captured, err := plugins.Capture(environment.layout.Config)
 	if err != nil {
 		return err
 	}
