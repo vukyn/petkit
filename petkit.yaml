@@ -18,14 +18,6 @@ items:
       Writes and maintains a repository's TODO.md as a coded index of open work.
       Not provided by any plugin — this repository is its only home.
 
-  - id: skill/todo-checklist
-    kind: skill
-    source: skills/todo-checklist
-    target: ~/.claude/skills/todo-checklist
-    note: |
-      Personal. Writes checklists as .todo files in Todo+ format — smoke tests,
-      release sign-offs, QA sheets — rather than printing them to a console.
-
 # ── What is deliberately NOT here ────────────────────────────────────────────
 #
 # The test an item has to pass is one question: **who else writes this file?**
