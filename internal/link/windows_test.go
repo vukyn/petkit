@@ -122,11 +122,18 @@ func TestEverywhereElseALinkThatDiffersOnlyInCaseIsStale(t *testing.T) {
 //
 // ⚠️ The link is created at whatever path the layout resolves the target to,
 // not at a path spelled here. A Windows layout converts the manifest's "/" to a
-// backslash, so on this machine the link's NAME contains a backslash — which is
-// legal on macOS and is exactly what makes the Windows resolution watchable
-// here. Spelling the path independently would measure the fixture instead.
+// backslash — including the "/" in the home directory itself — so on this
+// machine the resolved target is not an absolute path at all: it is one
+// filename, legal on macOS, that happens to contain backslashes. os.Symlink
+// and os.Lstat therefore resolve it against the process's current directory,
+// not against home. The chdir below is what keeps that filename inside a
+// sandbox instead of next to this file: without it, the earlier version of
+// this fixture left a literal `\var\folders\...` entry sitting in this
+// package's own directory on every run. Spelling the path independently
+// would measure the fixture instead.
 func caseDifferingMachine(t *testing.T, goos string) (*manifest.Manifest, manifest.Layout) {
 	t.Helper()
+	t.Chdir(t.TempDir())
 	m := newMachine(t)
 	m.skill("Writing-Todo", "from the repository")
 
