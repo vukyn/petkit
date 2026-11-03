@@ -39,6 +39,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `MFST` | **m**ani**f**e**st** | `petkit.yaml`: schema, validation, and what is tracked |
 | `SETT` | **sett**ings | `settings/fragment.json` and the merge into `~/.claude/settings.json` |
 | `PLUG` | **plug**ins | `settings/plugins.json` and the `claude plugin` commands derived from it |
+| `MCP` | **mcp** | `settings/mcp.json` and the `claude mcp add -s user` commands derived from it — user-scope servers only |
 | `CLI` | **cli** | the command surface, versioning, `check`, `init`, and the gates |
 | `DOC` | **doc**umentation | what this repository writes down about itself, and about the machine it manages |
 
@@ -63,6 +64,9 @@ defect fixed in `internal/link` is still `SETT`.
 | `PLUG-004` | done | `petkit plugins capture` reproduces `settings/plugins.json` from the live files, reduced to `{id, scope, version}` plus each marketplace's source — and a test feeds it a `projectPath` and searches the written bytes for it |
 | `PLUG-002` | done | `claude plugin install` has no version flag, so a version cannot be pinned: the field is relabelled **last seen** — a reading a machine can notice it is behind, not a target |
 | `PLUG-005` | done | `plugins plan` read the enabled set out of `installed_plugins.json`, which `claude plugin install` rewrites without it, and printed `claude plugin enable` for a plugin `claude` called already enabled: it now reads `settings.json`'s `enabledPlugins`, the legacy key only as a fallback |
+
+| `MCP-001` | done | The user-scope MCP server list and `mcp plan` |
+| `MCP-002` | done | `petkit mcp capture` reproduces `settings/mcp.json` from `~/.claude.json`'s `mcpServers` key, reducing every env var and header to its NAME — and a test feeds it a planted secret value and searches the written bytes for it |
 | `CLI-001` | done | The command surface and the version rule |
 | `CLI-003` | done | The command surface moved to `urfave/cli/v3` — every documented message byte-identical, and an undefined flag is now refused instead of silently ignored |
 | `CLI-004` | done | `petkit version` printed a whole pseudo-version on a dirty tree: `+dirty` is build metadata and the anchored pattern did not allow for it |
@@ -81,6 +85,7 @@ defect fixed in `internal/link` is still `SETT`.
 | `PLUG-003` | refused | Installing plugins ourselves instead of printing `claude plugin` commands |
 | `MFST-003` | refused | Tracking another repository's agents, commands and scripts |
 | `CLI-013` | refused | `check` answering "is there a newer tag" from the GitHub tags API with no clone — four failure modes bought for a question `petkit setup` disposes of in one command |
+| `MCP-003` | refused | Tracking project- and local-scope MCP servers |
 
 ## Done
 
@@ -141,6 +146,34 @@ defect fixed in `internal/link` is still `SETT`.
   `Capture` now take the config directory and read `enabledPlugins` there; the
   key in `installed_plugins.json` is read only when `settings.json` has none.
   Mutation: reading the legacy key first turns four tests red.
+
+- `MCP-001` **The user-scope MCP server list.** `settings/mcp.json` records the
+  `claude mcp add -s user` servers a machine should have; `mcp plan` prints the
+  commands that would close the gap and **never runs them**. ⚠️ **Only user
+  scope is tracked** — see `MCP-003`. A server's `command` (and, for `http`/
+  `sse`, its `url`) is kept as the absolute path or address a live machine
+  recorded, because `claude mcp add` cannot start it without one; `mcp plan`
+  attaches an advisory note next to it instead of stripping it, naming it
+  machine-specific. There is **no version concept**: measured 2026-11-03,
+  `claude mcp add --help` has no version-pinning flag at all, so `Server` has
+  no `Version` field — present-and-empty or otherwise.
+
+- `MCP-002` **`petkit mcp capture`.** `settings/mcp.json` is rebuilt from the
+  live `~/.claude.json`'s `mcpServers` key — measured 2026-11-03 by diffing
+  `~/.claude.json` before and after `claude mcp add -s user ...`, once for a
+  stdio server and once for an `http` one, then removing both — reduced to
+  `{name, transport, command, args, url}` per server plus the **NAMES**
+  (never the values) of its env vars and headers, sorted. ⚠️ **The value
+  reduction is enforced by discipline, not by the type the way `PLUG-004`'s
+  is**: `liveServer`'s `Env`/`Headers` fields do hold the live values (there
+  is no field-shaped way to read a map's keys without also being able to read
+  its values), so `Capture` is the one place in the package that is trusted
+  to read them and only ever calls the key-listing helper on them. The test
+  plants a fake secret as a named constant and searches **the bytes that
+  would be written** for it, the same discipline `PLUG-004`'s test holds
+  `plugins.Capture` to. ⚠️ **A secret typed directly into `args` is invisible
+  to this reduction and stays in the file** — a documented limitation, not a
+  gap nobody noticed; see `settings/README.md`.
 
 - `SETT-002` **`status` notices settings drift.** One line at the end of
   `petkit status`: the live settings file is `in step with the fragment`,
@@ -372,3 +405,21 @@ defect fixed in `internal/link` is still `SETT`.
   fallback inside `check` — a `check` that answers from a different source
   depending on whether a directory happens to exist is two commands wearing one
   name, and the reader cannot tell which one answered.
+
+- `MCP-003` **Tracking project- and local-scope MCP servers.** Considered and
+  refused alongside `MCP-001`/`MCP-002`, 2026-11-03. `claude mcp add` has three
+  scopes: `user` (this repository's whole concern), `project` (written into
+  the project's own `.mcp.json`, committed with that project) and `local`
+  (tied to one machine AND one project path at once). Project-scope is the
+  same shape `MFST-003` already decided: it is addressed *relative to the
+  repository that owns it* and arrives with `git clone`, so a copy here would
+  be a second version of a tracked file with no reader. Local-scope cannot be
+  refused the same way — there is no other repository for it to belong to —
+  it is refused because a single cross-machine record cannot represent it
+  honestly: "this machine, in this one checkout" has no "which machine, which
+  checkout" field to put the other half of the pair in, and a record that
+  silently assumed one machine and one checkout would be wrong everywhere
+  else it was read. ⚠️ Re-raise only for a concrete need to describe a single
+  project-local MCP server across machines, and then as a record that
+  carries both halves explicitly rather than pretending one global list can
+  mean the same thing on every clone.
