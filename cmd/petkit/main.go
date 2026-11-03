@@ -18,6 +18,7 @@ import (
 
 	"github.com/vukyn/petkit/internal/link"
 	"github.com/vukyn/petkit/internal/manifest"
+	"github.com/vukyn/petkit/internal/mcp"
 	"github.com/vukyn/petkit/internal/ospath"
 	"github.com/vukyn/petkit/internal/plugins"
 	"github.com/vukyn/petkit/internal/settings"
@@ -255,6 +256,42 @@ func newRootCommand(environment environment) *cli.Command {
 					}
 					fmt.Fprintln(environment.stderr,
 						"petkit plugins: say plan or capture (petkit never installs anything itself)")
+					return errUsage
+				},
+			},
+			{
+				Name:         "mcp",
+				Usage:        "the claude commands that would match the manifest's user-scope MCP servers",
+				UsageText:    "petkit mcp <plan|capture>",
+				OnUsageError: usageError(environment),
+				Commands: []*cli.Command{
+					{
+						Name:         "plan",
+						Usage:        "the claude commands that would match the manifest",
+						UsageText:    "petkit mcp plan",
+						OnUsageError: usageError(environment),
+						Action: func(context.Context, *cli.Command) error {
+							return commandMcpPlan(environment)
+						},
+					},
+					{
+						Name:         "capture",
+						Usage:        "rewrite settings/mcp.json from what this machine has",
+						UsageText:    "petkit mcp capture",
+						OnUsageError: usageError(environment),
+						Action: func(context.Context, *cli.Command) error {
+							return commandMcpCapture(environment)
+						},
+					},
+				},
+				Action: func(_ context.Context, command *cli.Command) error {
+					if name := command.Args().First(); name != "" {
+						fmt.Fprintf(environment.stderr,
+							"petkit mcp: unknown subcommand %q; say plan or capture\n", name)
+						return errUsage
+					}
+					fmt.Fprintln(environment.stderr,
+						"petkit mcp: say plan or capture (petkit never installs anything itself)")
 					return errUsage
 				},
 			},
@@ -759,6 +796,125 @@ func commandPluginsCapture(environment environment) error {
 	fmt.Fprintln(environment.stdout,
 		"\nThe version of each plugin is what this machine has today — a reading, not a pin.\n"+
 			"Commit the file if this machine is the one the repository should describe.")
+	return nil
+}
+
+// mcpManifestPath is the file `mcp plan` reads and `mcp capture` writes.
+func mcpManifestPath(root string) string {
+	return filepath.Join(root, "settings", "mcp.json")
+}
+
+// mcpClaudeJSONPath is where `claude mcp add -s user` writes a user-scope MCP
+// server.
+//
+// ⚠️ This is NEITHER always environment.layout.Home NOR always
+// environment.layout.Config — measured 2026-11-03, by diffing ~/.claude.json
+// before and after `claude mcp add -s user ...`, twice: once with
+// CLAUDE_CONFIG_DIR unset and once with it pointed at a scratch directory.
+// Unset, `claude` writes `~/.claude.json`, BESIDE `~/.claude/` rather than
+// inside it — `environment.layout.Home`, not `.Config`, which is what
+// `plugins.go` never had to ask (its live directory is always `.Config`,
+// relocated or not, because `~/.claude/plugins` already lives under it). Set,
+// `claude` writes `.claude.json` INSIDE the directory CLAUDE_CONFIG_DIR
+// names — the same directory `environment.layout.Config` already resolves to
+// in that case. So the variable relocates `.claude.json` too, but not to
+// where plugins' own resolution would suggest: there is no single field on
+// Layout that already answers this, and the branch below is why.
+func mcpClaudeJSONPath(environment environment) string {
+	if environment.env(manifest.EnvConfigDir) != "" {
+		return filepath.Join(environment.layout.Config, ".claude.json")
+	}
+	return filepath.Join(environment.layout.Home, ".claude.json")
+}
+
+func commandMcpPlan(environment environment) error {
+	location, err := locate(environment)
+	if err != nil {
+		return err
+	}
+	desired, err := mcp.LoadDesired(mcpManifestPath(location.Root))
+	if err != nil {
+		return err
+	}
+	live, err := mcp.LoadLive(mcpClaudeJSONPath(environment))
+	if err != nil {
+		return err
+	}
+
+	plan := mcp.Build(desired, live)
+	if len(plan.Commands) == 0 {
+		fmt.Fprintln(environment.stdout, "this machine already has every user-scope MCP server in the manifest")
+	} else {
+		for _, command := range plan.Commands {
+			fmt.Fprintf(environment.stdout, "%s\n    # %s\n", command.Line, command.Why)
+		}
+	}
+	for _, note := range plan.Notes {
+		fmt.Fprintf(environment.stdout, "# %s\n", note)
+	}
+	fmt.Fprintln(environment.stdout,
+		"\nThese are commands to run by hand. petkit printed them and ran none of them.")
+	return nil
+}
+
+// commandMcpCapture rewrites settings/mcp.json from the user-scope MCP
+// servers this machine actually has configured.
+//
+// ⚠️ It writes into the repository, not into the home directory — the same
+// exception `plugins capture` is, and for the same reason: it goes through
+// the same backup → temp → rename `settings apply` uses, because the file it
+// replaces is hand-curated.
+func commandMcpCapture(environment environment) error {
+	location, err := locate(environment)
+	if err != nil {
+		return err
+	}
+	path := mcpManifestPath(location.Root)
+
+	captured, err := mcp.Capture(mcpClaudeJSONPath(environment))
+	if err != nil {
+		return err
+	}
+	content, err := mcp.Encode(captured)
+	if err != nil {
+		return err
+	}
+
+	// A missing file is the first capture, not a failure.
+	var before *mcp.Desired
+	existing, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if before, err = mcp.LoadDesired(path); err != nil {
+			return err
+		}
+	case !os.IsNotExist(err):
+		return fmt.Errorf("cannot read %s: %w", path, err)
+	}
+
+	shown := environment.layout.Display(path)
+	if bytes.Equal(existing, content) {
+		fmt.Fprintf(environment.stdout,
+			"%s already says what this machine has; nothing was written\n", shown)
+		return nil
+	}
+
+	for _, line := range mcp.Changes(before, captured) {
+		fmt.Fprintf(environment.stdout, "%s\n", line)
+	}
+
+	backupPath, err := settings.WriteWithBackup(path, content, 0o644, time.Now())
+	if err != nil {
+		return err
+	}
+	if backupPath != "" {
+		fmt.Fprintf(environment.stdout, "backup %s\n", environment.layout.Display(backupPath))
+	}
+	fmt.Fprintf(environment.stdout, "wrote  %s\n", shown)
+	fmt.Fprintln(environment.stdout,
+		"\nEnv var and header VALUES are never recorded, only their names — `mcp plan` shows\n"+
+			"<value: fill in> for each. Commit the file if this machine is the one the repository\n"+
+			"should describe.")
 	return nil
 }
 

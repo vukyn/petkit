@@ -388,7 +388,7 @@ func TestPluginsPlanPrintsAndChangesNothing(t *testing.T) {
 // graph leaves the help, and this list stops matching.
 func TestHelpListsEveryCommand(t *testing.T) {
 	commands := []string{
-		"setup", "status", "sync", "doctor", "settings", "plugins", "check", "version", "init",
+		"setup", "status", "sync", "doctor", "settings", "plugins", "mcp", "check", "version", "init",
 	}
 
 	// All three spellings reach the same help, and all three are worth 0.
@@ -772,6 +772,187 @@ func TestPluginsCaptureWritesTheReducedFileAndRepeatsItself(t *testing.T) {
 	}
 	if !strings.Contains(string(moved), "1.0.200") {
 		t.Errorf("a machine that moved was not captured:\n%s", moved)
+	}
+}
+
+// mcp plan prints commands and runs none: the machine it describes is not
+// changed by describing it.
+func TestMcpPlanPrintsAndChangesNothing(t *testing.T) {
+	s := newSandbox(t)
+	write(t, filepath.Join(s.root, "settings", "mcp.json"), `{
+      "servers": [
+        {
+          "name": "secrets-server",
+          "transport": "stdio",
+          "command": "/usr/local/bin/secrets-server",
+          "envVars": ["API_KEY"]
+        }
+      ]
+    }`)
+
+	if code := s.run("mcp", "plan"); code != 0 {
+		t.Fatalf("mcp plan exited %d: %s", code, s.output())
+	}
+	printed := s.stdout.String()
+	for _, want := range []string{
+		"claude mcp add -s user secrets-server",
+		"-e 'API_KEY=<value: fill in>'",
+		"'/usr/local/bin/secrets-server'",
+		"absolute path",
+		"ran none of them",
+	} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("the plan does not contain %q:\n%s", want, printed)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(s.home, ".claude.json")); !os.IsNotExist(err) {
+		t.Error("mcp plan created a .claude.json under the home directory")
+	}
+}
+
+// writeLiveMcpServers is a machine that has configured one user-scope MCP
+// server: the mcpServers key ~/.claude.json holds, with the env value a
+// capture must not carry across.
+func (s *sandbox) writeLiveMcpServers(t *testing.T, envValue string) {
+	t.Helper()
+	write(t, filepath.Join(s.home, ".claude.json"), `{
+      "mcpServers": {
+        "secrets-server": {
+          "type": "stdio",
+          "command": "/usr/local/bin/secrets-server",
+          "env": {"API_KEY": "`+envValue+`"}
+        }
+      }
+    }`)
+}
+
+// ⚠️ MCP-002 at the command line. capture writes into the REPOSITORY, same
+// exception plugins capture is, so it owes the same backup → temp → rename —
+// and a run that changes nothing must write nothing, or every run leaves
+// another backup. The env value is a named fixture constant, never inline,
+// so what this test refuses to find is never mistaken for a real secret.
+func TestMcpCaptureWritesTheReducedFileAndRepeatsItself(t *testing.T) {
+	const liveSecretOne = "throwaway-secret-should-never-be-written-one"
+	const liveSecretTwo = "throwaway-secret-should-never-be-written-two"
+
+	s := newSandbox(t)
+	s.writeLiveMcpServers(t, liveSecretOne)
+	path := filepath.Join(s.root, "settings", "mcp.json")
+	write(t, path, `{"servers": []}`)
+
+	if code := s.run("mcp", "capture"); code != 0 {
+		t.Fatalf("mcp capture exited %d: %s", code, s.output())
+	}
+	captured, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the capture: %v", err)
+	}
+	if strings.Contains(string(captured), liveSecretOne) {
+		t.Errorf("the written file carries the env value:\n%s", captured)
+	}
+	if !strings.Contains(string(captured), `"API_KEY"`) {
+		t.Errorf("the capture did not record the env var NAME:\n%s", captured)
+	}
+	if !strings.Contains(s.stdout.String(), "+ server       secrets-server (stdio)") {
+		t.Errorf("capture did not print what changed: %s", s.stdout.String())
+	}
+
+	backups := backupsBeside(t, path)
+	if len(backups) != 1 {
+		t.Fatalf("found %d backups of the file it replaced, want 1: %v", len(backups), backups)
+	}
+
+	// The second run: the machine has not moved, so there is nothing to write —
+	// and nothing is written, including no second backup.
+	if code := s.run("mcp", "capture"); code != 0 {
+		t.Fatalf("the second capture exited %d: %s", code, s.output())
+	}
+	if !strings.Contains(s.stdout.String(), "nothing was written") {
+		t.Errorf("the second capture did not report an unchanged machine: %s", s.stdout.String())
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(after) != string(captured) {
+		t.Errorf("the second capture rewrote the file:\n%s\nwas\n%s", after, captured)
+	}
+	if again := backupsBeside(t, path); len(again) != 1 {
+		t.Errorf("the second capture left %d backups, want the 1 from the first: %v", len(again), again)
+	}
+
+	// The positive case the "nothing was written" refusal owes: move the
+	// machine — add a second server, and change the secret the first one
+	// holds — and the identical command writes again, with neither secret in
+	// the file.
+	write(t, filepath.Join(s.home, ".claude.json"), `{
+      "mcpServers": {
+        "secrets-server": {
+          "type": "stdio",
+          "command": "/usr/local/bin/secrets-server",
+          "env": {"API_KEY": "`+liveSecretTwo+`"}
+        },
+        "newcomer-server": {
+          "type": "stdio",
+          "command": "/opt/newcomer"
+        }
+      }
+    }`)
+	if code := s.run("mcp", "capture"); code != 0 {
+		t.Fatalf("the third capture exited %d: %s", code, s.output())
+	}
+	moved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(moved), "newcomer-server") {
+		t.Errorf("a machine that moved was not captured:\n%s", moved)
+	}
+	if strings.Contains(string(moved), liveSecretOne) || strings.Contains(string(moved), liveSecretTwo) {
+		t.Errorf("a machine that moved still must not leak either secret:\n%s", moved)
+	}
+	if !strings.Contains(s.stdout.String(), "+ server       newcomer-server (stdio)") {
+		t.Errorf("the third capture did not print what changed: %s", s.stdout.String())
+	}
+}
+
+// Claude writes a user-scope MCP server's config into ~/.claude.json — NOT
+// `environment.layout.Config`, unlike plugins' live directory, which is
+// `.Config` whether or not CLAUDE_CONFIG_DIR is set. Measured 2026-11-03 (see
+// mcpClaudeJSONPath): with the variable set, `claude` relocates `.claude.json`
+// into the directory CLAUDE_CONFIG_DIR names — the same directory `.Config`
+// resolves to, but reached by a branch of its own rather than by `.Config`
+// always being the right answer.
+func TestMcpHonoursClaudeConfigDirForTheClaudeJSONLookup(t *testing.T) {
+	s := newSandbox(t)
+	write(t, filepath.Join(s.root, "settings", "mcp.json"), `{
+      "servers": [{"name": "secrets-server", "transport": "stdio", "command": "/usr/local/bin/secrets-server"}]
+    }`)
+
+	configDir := filepath.Join(s.base, "elsewhere-config")
+	s.env[manifest.EnvConfigDir] = configDir
+	write(t, filepath.Join(configDir, ".claude.json"), `{
+      "mcpServers": {
+        "secrets-server": {"type": "stdio", "command": "/usr/local/bin/secrets-server"}
+      }
+    }`)
+
+	if code := s.run("mcp", "plan"); code != 0 {
+		t.Fatalf("mcp plan exited %d: %s", code, s.output())
+	}
+	if strings.Contains(s.stdout.String(), "claude mcp add") {
+		t.Errorf("mcp plan did not read the .claude.json CLAUDE_CONFIG_DIR names: %s", s.stdout.String())
+	}
+
+	// The failing case this proves: unset the variable, and the identical
+	// manifest now sees a machine with nothing configured — because the
+	// lookup moved to ~/.claude.json, where nothing was written.
+	s.env[manifest.EnvConfigDir] = ""
+	if code := s.run("mcp", "plan"); code != 0 {
+		t.Fatalf("mcp plan exited %d: %s", code, s.output())
+	}
+	if !strings.Contains(s.stdout.String(), "claude mcp add -s user secrets-server") {
+		t.Errorf("mcp plan did not fall back to ~/.claude.json once CLAUDE_CONFIG_DIR is unset: %s", s.stdout.String())
 	}
 }
 
