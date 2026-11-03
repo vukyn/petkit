@@ -353,7 +353,7 @@ func TestTwoCapturesOfOneMachineAreTheSameBytes(t *testing.T) {
 
 	// Twenty, not two: the failure this watches for is map iteration order
 	// reaching the output, and that order is random per range.
-	for attempt := 0; attempt < 20; attempt++ {
+	for attempt := range 20 {
 		again, err := mcp.Capture(path)
 		if err != nil {
 			t.Fatalf("capture %d: %v", attempt, err)

@@ -401,7 +401,7 @@ func TestHelpListsEveryCommand(t *testing.T) {
 		// mentions `petkit init` too, and matching that would let a dropped
 		// command pass.
 		listed := map[string]bool{}
-		for _, line := range strings.Split(s.stdout.String(), "\n") {
+		for line := range strings.SplitSeq(s.stdout.String(), "\n") {
 			name, ok := strings.CutPrefix(line, "  petkit ")
 			if !ok {
 				continue
@@ -523,7 +523,7 @@ func TestEveryCommandSaysWhichRepositoryItResolvedAndHow(t *testing.T) {
 		if code := s.run(invocation...); code != 0 {
 			t.Fatalf("%v exited %d: %s", invocation, code, s.output())
 		}
-		first := strings.SplitN(s.stdout.String(), "\n", 2)[0]
+		first, _, _ := strings.Cut(s.stdout.String(), "\n")
 		if !strings.Contains(first, s.root) {
 			t.Errorf("%v does not name the repository it used: %q", invocation, first)
 		}
@@ -594,7 +594,7 @@ func TestAWalkedUpRepositoryThatIsNotTheRecordedOneNamesBoth(t *testing.T) {
 	if code := s.run("sync", "--dry-run"); code != 0 {
 		t.Fatalf("sync --dry-run exited %d: %s", code, s.output())
 	}
-	first := strings.SplitN(s.stdout.String(), "\n", 2)[0]
+	first, _, _ := strings.Cut(s.stdout.String(), "\n")
 	if !strings.Contains(first, s.root) {
 		t.Errorf("the line does not name the repository that was used: %q", first)
 	}
@@ -619,7 +619,7 @@ func TestAWalkedUpRepositoryThatIsNotTheRecordedOneNamesBoth(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("sync --dry-run exited %d from a neutral directory: %s", code, s.output())
 	}
-	agreed := strings.SplitN(s.stdout.String(), "\n", 2)[0]
+	agreed, _, _ := strings.Cut(s.stdout.String(), "\n")
 	if strings.Contains(agreed, "petkit init recorded") {
 		t.Errorf("the line claimed a disagreement where there is none: %q", agreed)
 	}
