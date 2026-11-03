@@ -3,10 +3,6 @@
     "context-mode@context-mode": true
   },
   "marketplaces": {
-    "anthropic-agent-skills": {
-      "repo": "anthropics/skills",
-      "source": "github"
-    },
     "caveman": {
       "repo": "JuliusBrussee/caveman",
       "source": "github"
