@@ -115,8 +115,6 @@ def audit(path):
             err(row["line"], f"{code} is done but its entry is still under '## Not done'")
         if st == "refused" and not any(e["section"] == "Decided against" for e in es):
             err(row["line"], f"{code} is refused but has no entry under '## Decided against'")
-        if st == "done" and not es:
-            notes.append({"line": row["line"], "msg": f"{code} is done with no entry (fine for a capability paragraph that names it; check it is mentioned in Done)"})
         for e in es:
             if want and e["section"] != want and not (st == "done" and e["section"] == "Done"):
                 if not (st == "open" and e["section"] == "Not done"):
@@ -134,6 +132,40 @@ def audit(path):
             body = entry_body(lines, e["line"])
             if not REOPEN_HINT.search(body):
                 warn(e["line"], f"{e['code']} is refused but does not say what would bring it back")
+
+    # Every finished code must be findable: recorded in docs/decisions.md (a heading or an
+    # entry line naming it), or named in ## Done (an entry, or a capability paragraph the
+    # skill seeds Done with). Without docs/decisions.md the skill's small-project rule
+    # keeps the full record in the Done entry itself, so being named is not enough there.
+    decisions = Path(path).resolve().parent / "docs" / "decisions.md"
+    done_codes = {c for c, r in index.items() if r["status"] == "done"}
+    named_in_done = set()
+    for i, sec in enumerate(doc["section_at"], 1):
+        if sec == "Done" and not lines[i - 1].startswith("## "):
+            named_in_done.update(CODE_RE.findall(lines[i - 1]))
+    has_entry = {c for c, es in by_code.items() if any(e["section"] == "Done" for e in es)}
+    if decisions.is_file():
+        recorded = set(re.findall(rf"^(?:#+ |- (?:\[[ x]\] )?)`({CODE})`",
+                                  decisions.read_text(encoding="utf-8"), re.M))
+        for code in sorted(done_codes - recorded - named_in_done):
+            warn(index[code]["line"], f"{code} is done but neither docs/decisions.md records it nor ## Done names it")
+        for code in sorted(recorded):
+            st = index.get(code, {}).get("status")
+            if st in (None, "open"):
+                warn(0, f"docs/decisions.md records {code}, which is {st or 'missing from the index'}")
+        notes.append({"line": 0, "msg": f"records in docs/decisions.md: {len(recorded)}"})
+    else:
+        for code in sorted(done_codes - has_entry):
+            where = "named in a Done paragraph only" if code in named_in_done else "not in ## Done at all"
+            if code not in named_in_done:
+                warn(index[code]["line"], f"{code} is done but {where}, and there is no docs/decisions.md to hold its record")
+
+    # Done describes what exists. Naming an open code there is right for a follow-up
+    # ("X is still open") and wrong when it presents open work as shipped; only a reader
+    # can tell, so these are listed for the judgment pass, not flagged.
+    open_in_done = sorted(c for c in named_in_done if index.get(c, {}).get("status") == "open")
+    if open_in_done:
+        notes.append({"line": 0, "msg": "Done names open codes (check each is a follow-up, not work presented as shipped): " + ", ".join(open_in_done)})
 
     # Orphan bodies: an entry whose title line was lost leaves its 'Raised …' body
     # behind, where it reads as part of the entry above. It shows as a 'Raised' line
