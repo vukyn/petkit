@@ -251,6 +251,20 @@ awk '/^## Not done/{f=1;next} /^## /{f=0} f && /^- \[x\]/' TODO.md
 
 A full skeleton to copy: `TEMPLATE.md` beside this file.
 
+## Checking a TODO.md mechanically
+
+`todo.py` beside this file checks what text alone can decide — sections, index ↔ entry
+drift, ticks left under *Not done*, orphaned bodies whose title line was lost, line-number
+references, refusals with no way back — and lists the open items:
+
+```sh
+python3 <this skill's base directory>/todo.py audit  [TODO.md]   # exit 1 on any error
+python3 <this skill's base directory>/todo.py status [TODO.md]   # open items by area, JSON
+```
+
+The `todo-audit` and `todo-status` skills wrap them with the judgment the script cannot
+make (stale claims, what to clean up, what to do next).
+
 ## Checklist before committing a TODO change
 
 - [ ] Every new item has a code, taken from the index rather than counted.
@@ -260,4 +274,5 @@ A full skeleton to copy: `TEMPLATE.md` beside this file.
 - [ ] Nothing is referred to by line number.
 - [ ] Closed items are ticked **and moved** in this same commit.
 - [ ] `## Not done` holds zero `- [x]` entries — run the awk check above.
+- [ ] `todo.py audit` (beside this file) reports no errors.
 - [ ] Refused items say what would have to change to re-raise them.

@@ -18,6 +18,22 @@ items:
       Writes and maintains a repository's TODO.md as a coded index of open work.
       Not provided by any plugin — this repository is its only home.
 
+  - id: skill/todo-audit
+    kind: skill
+    source: skills/todo-audit
+    target: ~/.claude/skills/todo-audit
+    note: |
+      Audits a TODO.md against writing-todo's rules (script: writing-todo/todo.py audit)
+      and proposes cleanup. Read-only. Its only home is here, beside writing-todo.
+
+  - id: skill/todo-status
+    kind: skill
+    source: skills/todo-status
+    target: ~/.claude/skills/todo-status
+    note: |
+      Lists a TODO.md's open items by area and recommends what to do next
+      (script: writing-todo/todo.py status). Read-only. Its only home is here.
+
 # ── What is deliberately NOT here ────────────────────────────────────────────
 #
 # The test an item has to pass is one question: **who else writes this file?**
