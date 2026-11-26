@@ -3,6 +3,7 @@
 
     python3 todo.py audit  [TODO.md]   # rule violations, orphans, drift; exit 1 if any error
     python3 todo.py status [TODO.md]   # open items grouped by area, as JSON
+    python3 todo.py report-path [TODO.md]  # prepare <repo>/.todo/status.md, git-ignored locally
 
 Only what can be decided from the text lives here. Judgment (a claim with no
 number, an entry that is stale against the code, what to do next) belongs to the
@@ -250,10 +251,46 @@ def find_todo(arg):
     sys.exit("todo.py: no TODO.md in this directory or up to the repository root")
 
 
+REPORT_DIR = ".todo"
+
+
+def report_path(todo):
+    """Create <dir of TODO.md>/.todo/ and make sure git ignores it, without touching a
+    tracked file: an entry goes in the repository's own .git/info/exclude (shared by its
+    worktrees) unless the path is ignored already. Returns the report file path."""
+    import subprocess
+
+    root = todo.resolve().parent
+    out = root / REPORT_DIR
+    out.mkdir(exist_ok=True)
+    def git(*args):
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+    if git("rev-parse", "--is-inside-work-tree").returncode == 0:
+        probe = out / "status.md"
+        if git("check-ignore", "-q", str(probe)).returncode != 0:
+            excl = git("rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()
+            prefix = git("rev-parse", "--show-prefix").stdout.strip()
+            line = "/" + prefix + REPORT_DIR + "/"
+            exclude = Path(excl) / "info" / "exclude"
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            text = exclude.read_text() if exclude.exists() else ""
+            if line not in text.splitlines():
+                with exclude.open("a") as f:
+                    if text and not text.endswith("\n"):
+                        f.write("\n")
+                    f.write("# todo-status reports (local, never committed)\n" + line + "\n")
+            if git("check-ignore", "-q", str(probe)).returncode != 0:
+                sys.exit(f"todo.py: could not make {probe} ignored by git")
+    return out / "status.md"
+
+
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("audit", "status"):
+    if len(sys.argv) < 2 or sys.argv[1] not in ("audit", "status", "report-path"):
         sys.exit(__doc__)
     path = find_todo(sys.argv[2] if len(sys.argv) > 2 else None)
+    if sys.argv[1] == "report-path":
+        print(report_path(path))
+        return
     if sys.argv[1] == "audit":
         out = audit(path)
         print(json.dumps(out, ensure_ascii=False, indent=1))

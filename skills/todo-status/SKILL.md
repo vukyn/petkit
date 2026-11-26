@@ -1,14 +1,15 @@
 ---
 name: todo-status
-description: Present the open (Not done) items of a TODO.md written with the writing-todo skill, grouped by area with code and a one-line summary, flag in-progress or possibly stale items, and recommend what to do next. Read-only. Use for "todo status", "what's open", "còn gì chưa làm", "làm gì tiếp".
+description: Write a report of the open (Not done) items of a TODO.md written with the writing-todo skill — grouped by area with code and a one-line summary, in-progress and possibly stale items flagged, and what to do next — to <repo>/.todo/status.md (git-ignored locally). Does not edit TODO.md. Use for "todo status", "what's open", "còn gì chưa làm", "làm gì tiếp".
 ---
 
 # Open TODO items, and what to do next
 
 Lists what is still open in one `TODO.md` (written with the **writing-todo** skill) and
-ends with a recommendation. **Read-only**: it never edits the file or starts the work.
+ends with a recommendation, as a **Markdown report file** in the repository, not as
+terminal output. It never edits `TODO.md` or starts the work.
 
-Answer in the user's language. Codes, file names and identifiers stay verbatim.
+Write the report in the user's language. Codes, file names and identifiers stay verbatim.
 
 ## 1. Collect
 
@@ -36,10 +37,35 @@ Also gather, cheaply:
   `done`, a fix the recent `git log --oneline -20` names), read its entry. Do not open
   every entry.
 
-## 2. Present
+## 2. Write the report
+
+Get the report path; the script creates `.todo/` beside `TODO.md` and makes git ignore it
+through the repository's own `.git/info/exclude` (local to this clone, shared by its
+worktrees), so no tracked file such as `.gitignore` changes:
+
+```sh
+python3 <this skill's base directory>/../writing-todo/todo.py report-path [path/to/TODO.md]
+```
+
+Write the whole report to the printed path with the Write tool, overwriting the previous
+one. Report layout:
+
+```markdown
+# TODO status — <repo name>
+
+<date> · <N> open · from `TODO.md` at <short HEAD sha>
+
+## <area heading>
+- <CODE>: …
+
+…
+
+## Mục đáng làm tiếp
+<paragraph from step 3>
+```
 
 One block per area. Heading: the area's name in the user's language with its code in
-parentheses when helpful (`Hiệu ứng lá (EFX)`), bold. Then one line per item:
+parentheses when helpful (`Hiệu ứng lá (EFX)`), as a `##` heading. Then one line per item:
 
 ```
 - <CODE>: <summary rewritten as one short sentence in the user's language>.
@@ -59,7 +85,7 @@ No other commentary per line. No tables: the block layout is the format.
 
 ## 3. Recommend
 
-End with one short paragraph, **Mục đáng làm tiếp: <CODE>**, and why, in one or two
+End the report with one short paragraph, **Mục đáng làm tiếp: <CODE>**, and why, in one or two
 sentences. Prefer, in this order:
 
 1. an item that **unblocks** other open items (its code appears in their `mentions` /
@@ -71,3 +97,8 @@ sentences. Prefer, in this order:
 Never recommend an item marked in progress elsewhere, or one waiting for an owner
 decision, as "next" — name the decision instead if it blocks the most. Name at most one
 alternative, with its reason in a clause.
+
+## 4. Reply in the terminal
+
+Three lines at most: the report path, the open count per area on one line, and the
+recommended next item with its one-clause reason. Do not repeat the report.

@@ -260,6 +260,7 @@ references, refusals with no way back — and lists the open items:
 ```sh
 python3 <this skill's base directory>/todo.py audit  [TODO.md]   # exit 1 on any error
 python3 <this skill's base directory>/todo.py status [TODO.md]   # open items by area, JSON
+python3 <this skill's base directory>/todo.py report-path [TODO.md]  # <repo>/.todo/status.md, git-ignored
 ```
 
 The `todo-audit` and `todo-status` skills wrap them with the judgment the script cannot
