@@ -35,6 +35,8 @@ It prints JSON and exits 1 when there is any error. It checks:
 | orphans | a `Raised …` body that starts a block with no title above it, or a second `Raised` inside one entry — the body of an entry whose title line was lost |
 | references | line-number references, codes mentioned in prose that have no index row |
 | refusals | a refused entry that does not say what would bring it back |
+| records | a done code that is neither recorded in `docs/decisions.md` nor named in `## Done`; a record in `docs/decisions.md` for a code that is open or missing; without `docs/decisions.md`, a done code with no Done entry |
+| notes | open codes named in `## Done` — fine for a follow-up, wrong for open work presented as shipped; read each in step 2 |
 
 It also returns `counts`, `next_free` per area, the largest entries and the file size —
 use them in step 3.
