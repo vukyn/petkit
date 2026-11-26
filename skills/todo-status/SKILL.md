@@ -68,8 +68,13 @@ One block per area. Heading: the area's name in the user's language with its cod
 parentheses when helpful (`Hiệu ứng lá (EFX)`), as a `##` heading. Then one line per item:
 
 ```
-- <CODE>: <summary rewritten as one short sentence in the user's language>.
+- `<CODE>`: <summary rewritten as one short sentence in the user's language>.
 ```
+
+**Every code is an inline code span** (`` `EFX-024` ``), at the start of the line and
+wherever it appears in a summary, a flag or the recommendation. Markdown has no colour;
+a code span is what every viewer (the terminal, VS Code, GitHub, Obsidian, `glow`) draws
+in its own colour, which is the highlight. Do not use HTML colour: most viewers strip it.
 
 Keep the index order inside an area. Rewrite, do not translate word for word: the
 reader wants what the item *is*, not the row's wording.
@@ -78,14 +83,14 @@ Append to the line, only when true and checked:
 
 - **Đang làm** ở worktree `<name>` / branch `<name>`;
 - **Có thể đã lỗi thời**, and the one reason (what you saw in the code or the log);
-- **Cần <CODE> trước** when its entry says it depends on another open item;
+- **Cần `<CODE>` trước** when its entry says it depends on another open item;
 - **Chờ chủ dự án quyết** when the entry says a decision is pending.
 
 No other commentary per line. No tables: the block layout is the format.
 
 ## 3. Recommend
 
-End the report with one short paragraph, **Mục đáng làm tiếp: <CODE>**, and why, in one or two
+End the report with one short paragraph, **Mục đáng làm tiếp: `<CODE>`**, and why, in one or two
 sentences. Prefer, in this order:
 
 1. an item that **unblocks** other open items (its code appears in their `mentions` /
